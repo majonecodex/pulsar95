@@ -1,9 +1,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
+import Sound from './sounds.js';
+import { THEMES, applyTheme, getCurrentTheme, loadSavedTheme } from './themes.js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const PALETTE = ['#000080','#008000','#800000','#800080','#008080','#808000','#c00000','#004080'];
+const PALETTE = ['#000080', '#008000', '#800000', '#800080', '#008080', '#808000', '#c00000', '#004080'];
 const colorFor = (str) =>
   PALETTE[[...str].reduce((a, c) => a + c.charCodeAt(0), 0) % PALETTE.length];
 
@@ -15,13 +17,21 @@ const state = {
   currentRoom: null,
   currentChannel: null,
   messagesSub: null,
+  presenceChannel: null,
+  typingUsers: new Map()
 };
+
+// ── Prevent double-boot (double realtime subscribe error) ──
+let isBooted = false;
+
+// ── Image upload state ──
+let pendingAttachmentUrl = null;
 
 const $ = (id) => document.getElementById(id);
 
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) =>
-    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const showAuthError = (msg) => {
   $('auth-error').textContent = msg || '';
@@ -66,6 +76,7 @@ $('signup-btn').onclick = async () => {
 $('logout-btn').onclick = async () => {
   if (state.messagesSub) await supabase.removeChannel(state.messagesSub);
   await supabase.auth.signOut();
+  isBooted = false;
   location.reload();
 };
 
@@ -84,9 +95,13 @@ supabase.auth.onAuthStateChange(async (_event, session) => {
    ============================================================ */
 
 async function bootApp() {
+  if (isBooted) return;
+  isBooted = true;
+
   $('auth-screen').classList.add('hidden');
   $('app-screen').classList.remove('hidden');
   $('status-text').textContent = 'Connected';
+  Sound.notify();
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -104,7 +119,22 @@ async function bootApp() {
 
   await loadRooms();
 
-  // Realtime stream — handles INSERT and DELETE
+  // Clean up any previous subscription (safety net)
+  if (state.messagesSub) {
+    await supabase.removeChannel(state.messagesSub);
+    state.messagesSub = null;
+
+    // Process any pending invite stored before login
+    const pendingInvite = sessionStorage.getItem('pulsar95_pending_invite');
+    if (pendingInvite) {
+      sessionStorage.removeItem('pulsar95_pending_invite');
+      setTimeout(() => {
+        processInviteCode(pendingInvite);
+      }, 800);
+    }
+  }
+
+  // Fresh realtime subscription
   state.messagesSub = supabase
     .channel('messages-stream')
     .on(
@@ -125,6 +155,7 @@ async function bootApp() {
       { event: 'DELETE', schema: 'public', table: 'messages' },
       (payload) => {
         if (payload.old.channel_id !== state.currentChannel?.id) return;
+        Sound.message();
         const el = document.querySelector(
           '.message[data-message-id="' + payload.old.id + '"]'
         );
@@ -157,44 +188,17 @@ async function loadRooms() {
     div.dataset.roomId = r.id;
     div.onclick = () => selectRoom(r);
 
-    // Right-click → delete (only if you own it)
-    if (r.owner_id === state.user.id) {
-      div.oncontextmenu = async (e) => {
-        e.preventDefault();
-        const ok = await win95Confirm(
-          'Delete Room',
-          'Delete room "<b>' + escapeHtml(r.name) + '</b>"?<br><br>' +
-          'All channels and messages inside will be <b>permanently</b> deleted.'
-        );
-        if (!ok) return;
 
-        const { error } = await supabase.from('rooms').delete().eq('id', r.id);
-        if (error) return alert(error.message);
-
-        // Clear current selections if they belonged to this room
-        if (state.currentRoom?.id === r.id) {
-          state.currentRoom = null;
-          state.currentChannel = null;
-          $('room-name').textContent = '...';
-          $('channels-container').innerHTML = '';
-          $('messages').innerHTML = '';
-          $('channel-name').textContent = '-';
-        }
-        await loadRooms();
-      };
-    }
 
     container.appendChild(div);
   });
 
   if (state.rooms.length) {
-    // Only auto-select if we don't already have a valid current room
     const stillExists = state.currentRoom &&
       state.rooms.some((r) => r.id === state.currentRoom.id);
     if (!stillExists) {
       await selectRoom(state.rooms[0]);
     } else {
-      // re-highlight current room
       document.querySelectorAll('.room-icon').forEach((el) => el.classList.remove('active'));
       document
         .querySelector('.room-icon[data-room-id="' + state.currentRoom.id + '"]')
@@ -272,39 +276,15 @@ async function loadChannels() {
     div.dataset.channelId = c.id;
     div.onclick = () => selectChannel(c);
 
-    // Right-click → delete (room owner only)
-    if (isOwner) {
-      div.oncontextmenu = async (e) => {
-        e.preventDefault();
-        const ok = await win95Confirm(
-          'Delete Channel',
-          'Delete channel "<b>#' + escapeHtml(c.name) + '</b>"?<br><br>' +
-          'All messages in this channel will be <b>permanently</b> deleted.'
-        );
-        if (!ok) return;
 
-        const { error } = await supabase.from('channels').delete().eq('id', c.id);
-        if (error) return alert(error.message);
-
-        // Clear current channel if it was this one
-        if (state.currentChannel?.id === c.id) {
-          state.currentChannel = null;
-          $('channel-name').textContent = '-';
-          $('messages').innerHTML = '';
-        }
-        await loadChannels();
-      };
-    }
 
     container.appendChild(div);
   });
 
-  // Keep current channel if it still exists, otherwise pick first
   const stillExists = state.currentChannel &&
     state.channels.some((c) => c.id === state.currentChannel.id);
 
   if (stillExists) {
-    // re-highlight
     document.querySelectorAll('.channel-item').forEach((el) => el.classList.remove('active'));
     document
       .querySelector('.channel-item[data-channel-id="' + state.currentChannel.id + '"]')
@@ -331,6 +311,7 @@ async function selectChannel(channel) {
     ?.classList.add('active');
 
   await loadMessages();
+  await subscribeTyping(channel.id);
 }
 
 $('add-channel-btn').onclick = async () => {
@@ -394,29 +375,20 @@ function appendMessage(msg, scroll = false) {
   div.innerHTML =
     '<div class="message-avatar" style="background:' + escapeHtml(color) + '">' + escapeHtml(initial) + '</div>' +
     '<div class="message-content">' +
-      '<div class="message-header">' +
-        '<span class="message-author">' + escapeHtml(author) + '</span>' +
-        '<span class="message-time">' + escapeHtml(time) + '</span>' +
-      '</div>' +
-      '<div class="message-text">' + escapeHtml(msg.content) + '</div>' +
+    '<div class="message-header">' +
+    '<span class="message-author">' + escapeHtml(author) + '</span>' +
+    '<span class="message-time">' + escapeHtml(time) + '</span>' +
+    '</div>' +
+    '<div class="message-text">' + escapeHtml(msg.content) + '</div>' +
+    (msg.attachment_url
+      ? '<div class="message-image" data-full="' + escapeHtml(msg.attachment_url) + '">' +
+      '<img src="' + escapeHtml(msg.attachment_url) +
+      '" alt="attachment" loading="lazy">' +
+      '</div>'
+      : '') +
     '</div>';
 
-  // Right-click → delete (own messages only)
-  if (isMine) {
-    div.oncontextmenu = async (e) => {
-      e.preventDefault();
-      const ok = await win95Confirm(
-        'Delete Message',
-        'Delete this message?<br><br>' +
-        '<i>"' + escapeHtml(msg.content.slice(0, 80)) +
-        (msg.content.length > 80 ? '…' : '') + '"</i>'
-      );
-      if (!ok) return;
-      const { error } = await supabase.from('messages').delete().eq('id', msg.id);
-      if (error) return alert(error.message);
-      div.remove();
-    };
-  }
+
 
   container.appendChild(div);
   if (scroll) scrollToBottom();
@@ -426,17 +398,31 @@ $('composer').onsubmit = async (e) => {
   e.preventDefault();
   const input = $('message-input');
   const content = input.value.trim();
-  if (!content || !state.currentChannel) return;
+  const attachment_url = pendingAttachmentUrl;
 
+  if ((!content && !attachment_url) || !state.currentChannel) return;
+  Sound.send();
+  stopTyping();
   input.value = '';
+  pendingAttachmentUrl = null;
+  if ($('attach-btn')) {
+    $('attach-btn').textContent = '📎';
+    $('attach-btn').disabled = false;
+  }
+  $('message-input').placeholder = 'Message #' + state.currentChannel.name;
+
   const { error } = await supabase.from('messages').insert({
     channel_id: state.currentChannel.id,
     author_id: state.user.id,
-    content,
+    content: content || '(image)',
+    attachment_url,
   });
   if (error) {
     alert(error.message);
     input.value = content;
+  }
+  else {
+    Sound.success();
   }
 };
 
@@ -456,11 +442,57 @@ supabase.auth.getSession().then(({ data: { session } }) => {
 });
 
 /* ============================================================
+   IMAGE UPLOADS
+   ============================================================ */
+
+if ($('attach-btn')) {
+  $('attach-btn').onclick = () => $('file-input').click();
+}
+
+if ($('file-input')) {
+  $('file-input').onchange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      return alert('File too large (max 5 MB).');
+    }
+
+    $('attach-btn').textContent = '⏳';
+    $('attach-btn').disabled = true;
+
+    const ext = file.name.split('.').pop();
+    const path = `${state.user.id}/${Date.now()}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from('chat-attachments')
+      .upload(path, file);
+
+    if (error) {
+      alert('Upload failed: ' + error.message);
+      $('attach-btn').textContent = '📎';
+      $('attach-btn').disabled = false;
+      return;
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('chat-attachments')
+      .getPublicUrl(path);
+
+    pendingAttachmentUrl = publicUrl;
+    $('attach-btn').textContent = '✅';
+    $('message-input').placeholder = 'Image attached — press Send';
+    $('file-input').value = '';
+  };
+}
+
+/* ============================================================
    WIN95-STYLE CONFIRM DIALOG
    ============================================================ */
 
 function win95Confirm(title, message) {
   return new Promise((resolve) => {
+    Sound.ding();
     const overlay = document.createElement('div');
     overlay.style.cssText =
       'position: fixed; inset: 0; background: rgba(0,0,0,0.3);' +
@@ -469,43 +501,1878 @@ function win95Confirm(title, message) {
 
     overlay.innerHTML =
       '<div style="' +
-        'background: #c0c0c0; padding: 2px;' +
-        'border: 2px solid;' +
-        'border-color: #dfdfdf #404040 #404040 #dfdfdf;' +
-        'min-width: 320px; max-width: 420px;' +
-        'box-shadow: 1px 1px 0 #000;' +
+      'background: #c0c0c0; padding: 2px;' +
+      'border: 2px solid;' +
+      'border-color: #dfdfdf #404040 #404040 #dfdfdf;' +
+      'min-width: 320px; max-width: 420px;' +
+      'box-shadow: 1px 1px 0 #000;' +
       '">' +
-        '<div style="' +
-          'background: #000080; color: #fff; padding: 3px 6px;' +
-          'font-weight: bold; font-size: 12px;' +
-          'display: flex; justify-content: space-between; align-items: center;' +
-        '">' +
-          '<span>' + escapeHtml(title) + '</span>' +
-          '<span style="font-size: 10px;">X</span>' +
-        '</div>' +
-        '<div style="padding: 16px; display: flex; gap: 12px; align-items: flex-start;">' +
-          '<div style="font-size: 28px;">?</div>' +
-          '<div style="font-size: 12px; line-height: 1.4;">' + message + '</div>' +
-        '</div>' +
-        '<div style="padding: 8px 16px 12px; display: flex; gap: 6px; justify-content: center;">' +
-          '<button id="w95-yes" style="' +
-            'min-width: 70px; padding: 4px;' +
-            'background: #c0c0c0; border: 2px solid;' +
-            'border-color: #dfdfdf #404040 #404040 #dfdfdf;' +
-            'font-family: inherit; font-size: 12px; cursor: pointer;' +
-          '">Yes</button>' +
-          '<button id="w95-no" style="' +
-            'min-width: 70px; padding: 4px;' +
-            'background: #c0c0c0; border: 2px solid;' +
-            'border-color: #dfdfdf #404040 #404040 #dfdfdf;' +
-            'font-family: inherit; font-size: 12px; cursor: pointer;' +
-          '">No</button>' +
-        '</div>' +
+      '<div style="' +
+      'background: #000080; color: #fff; padding: 3px 6px;' +
+      'font-weight: bold; font-size: 12px;' +
+      'display: flex; justify-content: space-between; align-items: center;' +
+      '">' +
+      '<span>' + escapeHtml(title) + '</span>' +
+      '<span style="font-size: 10px;">X</span>' +
+      '</div>' +
+      '<div style="padding: 16px; display: flex; gap: 12px; align-items: flex-start;">' +
+      '<div style="font-size: 28px;">?</div>' +
+      '<div style="font-size: 12px; line-height: 1.4;">' + message + '</div>' +
+      '</div>' +
+      '<div style="padding: 8px 16px 12px; display: flex; gap: 6px; justify-content: center;">' +
+      '<button id="w95-yes" style="' +
+      'min-width: 70px; padding: 4px;' +
+      'background: #c0c0c0; border: 2px solid;' +
+      'border-color: #dfdfdf #404040 #404040 #dfdfdf;' +
+      'font-family: inherit; font-size: 12px; cursor: pointer;' +
+      '">Yes</button>' +
+      '<button id="w95-no" style="' +
+      'min-width: 70px; padding: 4px;' +
+      'background: #c0c0c0; border: 2px solid;' +
+      'border-color: #dfdfdf #404040 #404040 #dfdfdf;' +
+      'font-family: inherit; font-size: 12px; cursor: pointer;' +
+      '">No</button>' +
+      '</div>' +
       '</div>';
 
     document.body.appendChild(overlay);
     overlay.querySelector('#w95-yes').onclick = () => { overlay.remove(); resolve(true); };
-    overlay.querySelector('#w95-no').onclick  = () => { overlay.remove(); resolve(false); };
+    overlay.querySelector('#w95-no').onclick = () => { overlay.remove(); resolve(false); };
   });
 }
 
+/* ============================================================
+   IMAGE LIGHTBOX
+   ============================================================ */
+
+function openLightbox(src, title) {
+  if (document.getElementById('lightbox-overlay')) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.id = 'lightbox-overlay';
+  overlay.innerHTML =
+    '<div class="lightbox-inner">' +
+    '<div class="lightbox-titlebar">' +
+    '<span>🖼 ' + escapeHtml(title || 'Image Preview') + '</span>' +
+    '<button class="lightbox-close" id="lightbox-close">✕</button>' +
+    '</div>' +
+    '<div class="lightbox-img-wrap">' +
+    '<img id="lightbox-img" src="' + escapeHtml(src) + '" alt="preview">' +
+    '</div>' +
+    '<div class="lightbox-statusbar">' +
+    '<span id="lightbox-size">Loading…</span>' +
+    '<span>Click image to zoom · Click outside to close · Esc to close</span>' +
+    '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+
+  const img = overlay.querySelector('#lightbox-img');
+  const sizeEl = overlay.querySelector('#lightbox-size');
+
+  // Once loaded, show actual dimensions
+  img.onload = () => {
+    sizeEl.textContent =
+      img.naturalWidth + ' × ' + img.naturalHeight + ' px';
+  };
+
+  // Click image → zoom toggle
+  img.onclick = (e) => {
+    e.stopPropagation();
+    img.classList.toggle('zoomed');
+  };
+
+  // Click dark background → close
+  overlay.onclick = (e) => {
+    if (e.target === overlay) closeLightbox();
+  };
+
+  // Close button
+  overlay.querySelector('#lightbox-close').onclick = closeLightbox;
+
+  // Esc key closes
+  const escHandler = (e) => {
+    if (e.key === 'Escape') closeLightbox();
+  };
+  document.addEventListener('keydown', escHandler);
+  overlay._escHandler = escHandler;
+}
+
+function closeLightbox() {
+  const overlay = document.getElementById('lightbox-overlay');
+  if (!overlay) return;
+  if (overlay._escHandler) {
+    document.removeEventListener('keydown', overlay._escHandler);
+  }
+  overlay.remove();
+}
+
+// Global click delegation — any .message-image click opens the lightbox
+document.addEventListener('click', (e) => {
+  const wrap = e.target.closest('.message-image');
+  if (!wrap) return;
+  const src = wrap.dataset.full || wrap.querySelector('img')?.src;
+  if (!src) return;
+  openLightbox(src, 'Pulsar95 Image Preview');
+});
+
+// Mobile: long-press on an image also opens it (in case the tap opens a link)
+document.addEventListener('contextmenu', (e) => {
+  const wrap = e.target.closest('.message-image');
+  if (!wrap) return;
+  e.preventDefault();
+  openLightbox(wrap.dataset.full, 'Pulsar95 Image Preview');
+});
+
+/* ============================================================
+   MOBILE CHANNEL DRAWER
+   ============================================================ */
+
+function setupMobileChannels() {
+  const isMobile = window.matchMedia('(max-width: 720px)').matches;
+  const header = document.querySelector('.chat-header');
+  if (!header || !isMobile) return;
+  if (document.getElementById('mobile-channels-btn')) return;
+
+  // Hamburger button
+  const btn = document.createElement('button');
+  btn.id = 'mobile-channels-btn';
+  btn.textContent = '☰';
+  btn.style.cssText =
+    'margin-right:6px;padding:2px 8px;font-size:16px;' +
+    'background:#c0c0c0;border:2px solid;' +
+    'border-color:#dfdfdf #404040 #404040 #dfdfdf;' +
+    'font-family:inherit;cursor:pointer;';
+  header.prepend(btn);
+
+  // Click toggles the drawer
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    document.querySelector('.channel-pane')?.classList.toggle('open');
+  };
+
+  // Tap outside the drawer to close it
+  document.querySelector('.chat')?.addEventListener('click', () => {
+    document.querySelector('.channel-pane')?.classList.remove('open');
+  }, { passive: true });
+
+  // Selecting a channel closes the drawer
+  document.getElementById('channels-container')?.addEventListener('click', (e) => {
+    if (e.target.classList.contains('channel-item')) {
+      document.querySelector('.channel-pane')?.classList.remove('open');
+    }
+  });
+
+  // Also close it when you create a channel
+  const origAddChannel = document.getElementById('add-channel-btn');
+  if (origAddChannel) {
+    origAddChannel.addEventListener('click', () => {
+      setTimeout(() => {
+        document.querySelector('.channel-pane')?.classList.remove('open');
+      }, 100);
+    });
+  }
+}
+
+// Run once on load, and again if the user rotates their device / resizes
+setupMobileChannels();
+window.addEventListener('resize', setupMobileChannels);
+
+/* ============================================================
+   DRAGGABLE WINDOWS
+   ============================================================ */
+
+function makeDraggable(win) {
+  const titleBar = win.querySelector('.title-bar');
+  if (!titleBar) return;
+
+  // Skip on mobile
+  if (window.matchMedia('(max-width: 720px)').matches) return;
+
+  win.classList.add('draggable');
+
+  let isDragging = false;
+  let startX = 0, startY = 0;
+  let startLeft = 0, startTop = 0;
+
+  // Position the window with explicit coordinates centered on first drag
+  function ensurePositioned() {
+    const rect = win.getBoundingClientRect();
+    win.style.left = rect.left + 'px';
+    win.style.top = rect.top + 'px';
+    win.style.width = rect.width + 'px';
+    win.style.height = rect.height + 'px';
+  }
+
+  function onPointerDown(e) {
+    // Don't drag if the user clicked a button
+    if (e.target.closest('button')) return;
+    // Only left mouse button
+    if (e.button !== undefined && e.button !== 0) return;
+
+    ensurePositioned();
+    isDragging = true;
+
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = parseFloat(win.style.left) || 0;
+    startTop = parseFloat(win.style.top) || 0;
+
+    win.classList.add('dragging');
+    document.body.classList.add('dragging-active');
+
+    // Prevent text selection while dragging
+    e.preventDefault();
+
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+  }
+
+  function onPointerMove(e) {
+    if (!isDragging) return;
+
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+
+    // Compute the new position
+    let newLeft = startLeft + dx;
+    let newTop = startTop + dy;
+
+    // Keep the title bar visible: clamp inside viewport
+    const minLeft = -(win.offsetWidth - 100);
+    const maxLeft = window.innerWidth - 100;
+    const minTop = 0;
+    const maxTop = window.innerHeight - 30;
+
+    newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
+    newTop = Math.max(minTop, Math.min(maxTop, newTop));
+
+    win.style.left = newLeft + 'px';
+    win.style.top = newTop + 'px';
+  }
+
+  function onPointerUp() {
+    if (!isDragging) return;
+    isDragging = false;
+    win.classList.remove('dragging');
+    document.body.classList.remove('dragging-active');
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+  }
+
+  titleBar.addEventListener('pointerdown', onPointerDown);
+}
+
+// Apply to both the login window and the main app window
+document.querySelectorAll('.window').forEach(makeDraggable);
+
+// Re-apply when the app screen becomes visible (it's `hidden` at first)
+const observer = new MutationObserver(() => {
+  document.querySelectorAll('.window').forEach((w) => {
+    if (!w.dataset.dragReady) {
+      makeDraggable(w);
+      w.dataset.dragReady = '1';
+    }
+  });
+});
+observer.observe(document.body, { childList: true, subtree: true });
+
+/* ============================================================
+   WIN95 BOOT SEQUENCE
+   ============================================================ */
+
+const BOOT_SEQUENCE = [
+  { text: '', delay: 100 },
+  { text: 'Pulsar95 Systems Inc. — BIOS v2.1', delay: 200, cls: 'boot-header' },
+  { text: 'Copyright (C) 1996-2026, Pulsar95 Corp.', delay: 300, cls: 'boot-header' },
+  { text: '', delay: 300 },
+  { text: 'Main Processor    : Cosmic 486DX2 66MHz', delay: 150 },
+  { text: '', delay: 150 },
+  { text: 'Memory Test       : 0K', delay: 80, key: 'memory' },
+  { text: '', delay: 200 },
+  { text: 'Detecting IDE drives...', delay: 400 },
+  { text: '  Primary Master  : PULSAR-95 HDD', delay: 250 },
+  { text: '  Primary Slave   : None', delay: 200 },
+  { text: '  Secondary Master: CD-ROM 4x', delay: 200 },
+  { text: '', delay: 300 },
+  { text: 'Keyboard.........OK', delay: 150 },
+  { text: 'Mouse............OK', delay: 150 },
+  { text: 'Network..........OK', delay: 150 },
+  { text: '', delay: 300 },
+  { text: 'Starting Pulsar95...', delay: 700, cls: 'boot-header' },
+];
+
+// Synthesized Windows-95-style startup chime (no copyrighted asset)
+function playStartupChime() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const now = ctx.currentTime;
+
+    // Simple 3-note ascending arpeggio + soft pad
+    const notes = [
+      { freq: 261.63, start: 0.00, dur: 0.60 }, // C4
+      { freq: 329.63, start: 0.15, dur: 0.60 }, // E4
+      { freq: 392.00, start: 0.30, dur: 0.60 }, // G4
+      { freq: 523.25, start: 0.45, dur: 1.20 }, // C5
+    ];
+
+    notes.forEach(({ freq, start, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+
+      // Soft envelope
+      gain.gain.setValueAtTime(0, now + start);
+      gain.gain.linearRampToValueAtTime(0.15, now + start + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + start);
+      osc.stop(now + start + dur);
+    });
+
+    // Auto cleanup
+    setTimeout(() => ctx.close(), 3000);
+  } catch (e) {
+    // Audio blocked (user hasn't interacted yet) — silently skip
+    console.warn('Boot chime skipped:', e.message);
+  }
+}
+
+async function runBootSequence() {
+  const bootScreen = document.getElementById('boot-screen');
+  const bootContent = document.getElementById('boot-content');
+  const authScreen = document.getElementById('auth-screen');
+
+  if (!bootScreen || !bootContent) return;
+
+  // Skip if already ran this session
+  if (sessionStorage.getItem('pulsar95_boot_done') === '1') {
+    bootScreen.classList.add('hidden-boot');
+    return;
+  }
+
+  // Allow skip-on-click
+  let skipped = false;
+  const skipHandler = () => {
+    skipped = true;
+    bootScreen.classList.add('fade-out');
+    sessionStorage.setItem('pulsar95_boot_done', '1');
+    setTimeout(() => bootScreen.classList.add('hidden-boot'), 600);
+  };
+  bootScreen.addEventListener('click', skipHandler, { once: true });
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Print each line
+  for (const line of BOOT_SEQUENCE) {
+    if (skipped) return;
+
+    if (line.key === 'memory') {
+      // Animate memory counter from 0K to 640K
+      const memLine = document.createElement('div');
+      memLine.className = 'boot-line';
+      memLine.innerHTML = '<span class="label">Memory Test       : </span><span class="value" id="mem-count">0K</span>';
+      bootContent.appendChild(memLine);
+
+      for (let k = 0; k <= 640; k += 64) {
+        if (skipped) return;
+        const el = document.getElementById('mem-count');
+        if (el) el.textContent = k + 'K';
+        await sleep(30);
+      }
+      const el = document.getElementById('mem-count');
+      if (el) el.innerHTML = '640K <span class="accent">OK</span>';
+      await sleep(200);
+    } else {
+      const div = document.createElement('div');
+      div.className = 'boot-line' + (line.cls ? ' ' + line.cls : '');
+      div.textContent = line.text;
+      bootContent.appendChild(div);
+      await sleep(line.delay);
+    }
+  }
+
+  // Final pause + cursor
+  if (skipped) return;
+  const cursorDiv = document.createElement('div');
+  cursorDiv.className = 'boot-line';
+  cursorDiv.innerHTML = '<span class="boot-cursor"></span>';
+  bootContent.appendChild(cursorDiv);
+  await sleep(800);
+
+  if (skipped) return;
+
+  // Play chime
+  playStartupChime();
+
+  // Fade out boot, fade in auth screen
+  bootScreen.classList.add('fade-out');
+  sessionStorage.setItem('pulsar95_boot_done', '1');
+
+  if (authScreen) {
+    authScreen.classList.add('boot-appear');
+  }
+
+  setTimeout(() => {
+    bootScreen.classList.add('hidden-boot');
+  }, 600);
+}
+
+// Run boot sequence immediately on page load
+runBootSequence();
+
+/* ============================================================
+   WINDOWS 95 TASKBAR
+   ============================================================ */
+
+function initTaskbar() {
+  const startBtn = document.getElementById('win95-start-btn');
+  const startMenu = document.getElementById('win95-start-menu');
+  const taskButtons = document.getElementById('win95-task-buttons');
+  const clockEl = document.getElementById('win95-clock');
+
+  if (!startBtn || !startMenu) return; // taskbar not in DOM
+
+  // ── Start menu toggle ──
+  startBtn.onclick = (e) => {
+    e.stopPropagation();
+    Sound.click()
+    startMenu.classList.toggle('open');
+    startBtn.classList.toggle('active', startMenu.classList.contains('open'));
+  };
+
+  // ── Close menu when clicking elsewhere ──
+  document.addEventListener('click', (e) => {
+    if (!startMenu.contains(e.target) && e.target !== startBtn) {
+      startMenu.classList.remove('open');
+      startBtn.classList.remove('active');
+    }
+  });
+
+  // ── Menu actions ──
+  startMenu.querySelectorAll('.start-menu-item').forEach((item) => {
+    item.onclick = () => {
+      Sound.click();
+      const action = item.dataset.action;
+      startMenu.classList.remove('open');
+      startBtn.classList.remove('active');
+      handleStartMenuAction(action);
+    };
+  });
+
+  // ── Live clock ──
+  let showSeconds = false;
+  let showDate = false;
+
+  function updateClock() {
+    const now = new Date();
+    const opts = {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    };
+    if (showSeconds) opts.second = '2-digit';
+
+    if (showDate) {
+      clockEl.textContent =
+        now.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+        ' ' +
+        now.toLocaleTimeString([], opts);
+    } else {
+      clockEl.textContent = now.toLocaleTimeString([], opts);
+    }
+  }
+
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  clockEl.onclick = () => {
+    showSeconds = !showSeconds;
+    if (!showSeconds) showDate = false;
+    updateClock();
+    if (showSeconds && !showDate) {
+      // Second click shows date too
+      clockEl.dataset.clicks = String((+clockEl.dataset.clicks || 0) + 1);
+      if (+clockEl.dataset.clicks >= 2) {
+        showDate = true;
+        clockEl.dataset.clicks = '0';
+      }
+    }
+  };
+
+  // Volume toggle
+  const volumeIcon = document.querySelector('#win95-tray .tray-icon[title="Volume"]');
+  if (volumeIcon) {
+    // Set initial icon
+    volumeIcon.textContent = Sound.isMuted() ? '🔇' : '🔊';
+
+    volumeIcon.onclick = () => {
+      const nowMuted = Sound.toggleMute();
+      volumeIcon.textContent = nowMuted ? '🔇' : '🔊';
+      volumeIcon.title = nowMuted ? 'Muted' : 'Volume';
+    };
+  }
+
+  // ── Task buttons reflect open windows ──
+  window.updateTaskButtons = function () {
+    const tasks = [];
+
+    // Main app
+    if (!$('app-screen').classList.contains('hidden')) {
+      tasks.push({
+        id: 'task-app',
+        label: 'Pulsar95',
+        icon: '💬',
+        active: true,
+        onClick: () => {
+          const win = document.querySelector('#app-screen .window');
+          if (win) {
+            win.style.zIndex = 1000;
+            win.style.left = '40px';
+            win.style.top = '40px';
+          }
+        },
+      });
+    }
+
+    // Image lightbox (if open)
+    if (document.getElementById('lightbox-overlay')) {
+      tasks.push({
+        id: 'task-lightbox',
+        label: 'Image Viewer',
+        icon: '🖼',
+        active: true,
+        onClick: () => {
+          const lb = document.getElementById('lightbox-overlay');
+          if (lb) lb.style.zIndex = 100001;
+        },
+      });
+    }
+
+    taskButtons.innerHTML = '';
+    tasks.forEach((t) => {
+      const btn = document.createElement('button');
+      btn.className = 'win95-task-btn' + (t.active ? ' active' : '');
+      btn.id = t.id;
+      btn.innerHTML =
+        '<span class="task-icon">' + t.icon + '</span>' +
+        '<span>' + t.label + '</span>';
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        t.onClick();
+      };
+      taskButtons.appendChild(btn);
+    });
+  };
+
+  // Initial render
+  updateTaskButtons();
+
+  // Re-render when the app screen changes
+  const appScreen = $('app-screen');
+  if (appScreen) {
+    const mo = new MutationObserver(() => updateTaskButtons());
+    mo.observe(appScreen, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  // Re-render when a lightbox opens/closes
+  const bodyMo = new MutationObserver(() => {
+    clearTimeout(window._tbDebounce);
+    window._tbDebounce = setTimeout(updateTaskButtons, 80);
+  });
+  bodyMo.observe(document.body, { childList: true });
+}
+
+/* ============================================================
+   START MENU ACTIONS
+   ============================================================ */
+
+function handleStartMenuAction(action) {
+  switch (action) {
+    case 'programs':
+      alert('Programs: Notepad, Calculator, Minesweeper... coming soon.');
+      break;
+
+    case 'documents':
+      // List rooms you're in
+      if (state.rooms && state.rooms.length) {
+        const list = state.rooms.map((r) => '• ' + r.name).join('\n');
+        alert('Your rooms:\n\n' + list);
+      } else {
+        alert('No rooms yet.');
+      }
+      break;
+
+    case 'settings':
+      showDisplayProperties();
+      break;
+
+    case 'find':
+      if (state.currentChannel) {
+        const q = prompt('Find in #' + state.currentChannel.name + ':');
+        if (q) {
+          // Simple highlight of matching messages
+          document.querySelectorAll('.message').forEach((m) => {
+            const text = m.querySelector('.message-text')?.textContent || '';
+            m.style.background = text.toLowerCase().includes(q.toLowerCase())
+              ? '#ffff99'
+              : '';
+          });
+        }
+      } else {
+        alert('Open a channel first.');
+      }
+      break;
+
+    case 'help':
+      alert(
+        'Pulsar95 Help\n\n' +
+        '• Right-click a message you sent to delete it\n' +
+        '• Drag the blue title bar to move the window\n' +
+        '• Click 📎 to attach an image\n' +
+        '• Click the clock to show seconds\n'
+      );
+      break;
+
+    case 'run':
+      const cmd = prompt('Type a command:\n\n' +
+        '  about    — About Pulsar95\n' +
+        '  whoami   — Your username\n' +
+        '  logout   — Sign out\n' +
+        '  clear    — Reload the app\n');
+      if (cmd) {
+        const c = cmd.trim().toLowerCase();
+        if (c === 'about') alert('Pulsar95 — Cosmic chat for the retro web.');
+        else if (c === 'whoami') alert(state.profile?.username || 'Not logged in');
+        else if (c === 'logout') $('logout-btn').click();
+        else if (c === 'clear') location.reload();
+        else alert('Unknown command: ' + cmd);
+      }
+      break;
+
+    case 'shutdown':
+      showShutdownScreen();
+      break;
+  }
+}
+
+/* ============================================================
+   SHUT DOWN SCREEN
+   ============================================================ */
+
+function showShutdownScreen() {
+  Sound.shutdown();
+  const overlay = document.createElement('div');
+  overlay.id = 'win95-shutdown';
+  overlay.innerHTML =
+    '<div>It\'s now safe to turn off<br>your computer.</div>' +
+    '<div class="shutdown-hint">Click anywhere to restart Pulsar95</div>';
+
+  overlay.onclick = async () => {
+    // Sign out + reload
+    try {
+      if (state.messagesSub) await supabase.removeChannel(state.messagesSub);
+      await supabase.auth.signOut();
+    } catch (e) { }
+    location.reload();
+  };
+
+  document.body.appendChild(overlay);
+}
+
+/* ============================================================
+   INIT TASKBAR
+   ============================================================ */
+
+initTaskbar();
+
+/* ============================================================
+   WIN95 CONTEXT MENUS
+   ============================================================ */
+
+const CONTEXT_MENUS = {
+  room: (room) => {
+    const isOwner = room.owner_id === state.user?.id;
+    return [
+      { label: 'Open', action: () => selectRoom(room) },
+      { divider: true },
+      {
+        label: 'Invite to Room...',
+        action: () => showInviteDialog(room),
+      },
+      { divider: true },
+      {
+        label: 'Rename...',
+        disabled: !isOwner,
+        action: () => renameRoom(room),
+      },
+      {
+        label: 'Delete',
+        disabled: !isOwner,
+        action: () => deleteRoom(room),
+      },
+      { divider: true },
+      {
+        label: 'Properties',
+        action: () => showRoomProperties(room),
+      },
+    ];
+  },
+
+  channel: (channel) => {
+    const isOwner = state.currentRoom?.owner_id === state.user?.id;
+    return [
+      { label: 'Open', action: () => selectChannel(channel) },
+      { divider: true },
+      {
+        label: 'Rename...',
+        disabled: !isOwner,
+        action: () => renameChannel(channel),
+      },
+      {
+        label: 'Delete',
+        disabled: !isOwner,
+        action: () => deleteChannel(channel),
+      },
+      { divider: true },
+      {
+        label: 'Copy Name',
+        action: () => copyToClipboard('#' + channel.name),
+      },
+      {
+        label: 'Properties',
+        action: () => showChannelProperties(channel),
+      },
+    ];
+  },
+
+  message: (msg, el) => {
+    const isMine = msg.author_id === state.user?.id;
+    return [
+      {
+        label: 'Copy Text',
+        action: () => copyToClipboard(msg.content || ''),
+      },
+      {
+        label: 'Copy Author',
+        action: () => copyToClipboard(msg.author?.username || ''),
+      },
+      {
+        label: 'Copy Timestamp',
+        action: () => copyToClipboard(new Date(msg.created_at).toLocaleString()),
+      },
+      { divider: true },
+      {
+        label: 'Reply',
+        disabled: true,
+        action: () => { },
+      },
+      {
+        label: 'React',
+        disabled: true,
+        action: () => { },
+      },
+      { divider: true },
+      {
+        label: 'Delete',
+        disabled: !isMine,
+        action: () => deleteMessage(msg, el),
+      },
+      {
+        label: 'Properties',
+        action: () => showMessageProperties(msg),
+      },
+    ];
+  },
+
+  desktop: () => [
+    { label: 'Refresh', action: () => location.reload() },
+    { divider: true },
+    { label: 'Arrange Icons', disabled: true, action: () => { } },
+    { label: 'Line up Icons', disabled: true, action: () => { } },
+    { divider: true },
+    {
+      label: 'New Room...',
+      action: () => $('add-room-btn').click(),
+    },
+    {
+      label: 'New Channel...',
+      disabled: !state.currentRoom,
+      action: () => $('add-channel-btn').click(),
+    },
+    { divider: true },
+    {
+      label: 'Properties',
+      action: () => showDesktopProperties(),
+    },
+  ],
+
+  taskbar: () => [
+    { label: 'Cascade Windows', disabled: true, action: () => { } },
+    { label: 'Tile Windows', disabled: true, action: () => { } },
+    {
+      label: 'Minimize All', action: () => {
+        document.querySelectorAll('.window').forEach((w) => {
+          w.style.left = '40px';
+          w.style.top = '40px';
+        });
+      }
+    },
+    { divider: true },
+    { label: 'Task Manager', disabled: true, action: () => { } },
+    { label: 'Properties', disabled: true, action: () => { } },
+  ],
+};
+
+function showContextMenu(x, y, items) {
+  // Remove any existing menu
+  document.querySelectorAll('.win95-menu').forEach((m) => m.remove());
+
+  const menu = document.createElement('div');
+  menu.className = 'win95-menu';
+
+  items.forEach((item) => {
+    if (item.divider) {
+      const d = document.createElement('div');
+      d.className = 'win95-menu-divider';
+      menu.appendChild(d);
+      return;
+    }
+
+    if (item.label === null) {
+      const lbl = document.createElement('div');
+      lbl.className = 'win95-menu-label';
+      lbl.textContent = item.text || '';
+      menu.appendChild(lbl);
+      return;
+    }
+
+    const el = document.createElement('div');
+    el.className = 'win95-menu-item' + (item.disabled ? ' disabled' : '');
+    el.textContent = item.label;
+
+    if (item.arrow) {
+      const arrow = document.createElement('span');
+      arrow.className = 'menu-arrow';
+      arrow.textContent = '▶';
+      el.appendChild(arrow);
+    }
+
+    if (!item.disabled && item.action) {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        Sound.click();
+        closeAllMenus();
+        item.action();
+      };
+    }
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+
+  // Position — keep on-screen
+  const rect = menu.getBoundingClientRect();
+  let px = x, py = y;
+  if (px + rect.width > window.innerWidth - 4) px = window.innerWidth - rect.width - 4;
+  if (py + rect.height > window.innerHeight - 4) py = window.innerHeight - rect.height - 4;
+  if (px < 0) px = 0;
+  if (py < 0) py = 0;
+
+  menu.style.left = px + 'px';
+  menu.style.top = py + 'px';
+  menu.classList.add('open');
+}
+
+function closeAllMenus() {
+  document.querySelectorAll('.win95-menu').forEach((m) => m.remove());
+}
+
+// Global handlers
+document.addEventListener('click', closeAllMenus);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeAllMenus();
+});
+window.addEventListener('blur', closeAllMenus);
+window.addEventListener('resize', closeAllMenus);
+
+/* ============================================================
+   RIGHT-CLICK BINDINGS
+   ============================================================ */
+
+// Rooms (rebind after loadRooms creates them)
+function attachRoomContextMenus() {
+  document.querySelectorAll('.room-icon').forEach((el) => {
+    const roomId = el.dataset.roomId;
+    const room = state.rooms.find((r) => r.id === roomId);
+    if (!room) return;
+
+    el.oncontextmenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showContextMenu(e.clientX, e.clientY, CONTEXT_MENUS.room(room));
+    };
+  });
+}
+
+// Channels
+function attachChannelContextMenus() {
+  document.querySelectorAll('.channel-item').forEach((el) => {
+    const channelId = el.dataset.channelId;
+    const channel = state.channels.find((c) => c.id === channelId);
+    if (!channel) return;
+
+    el.oncontextmenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showContextMenu(e.clientX, e.clientY, CONTEXT_MENUS.channel(channel));
+    };
+  });
+}
+
+// Messages
+function attachMessageContextMenus() {
+  document.querySelectorAll('.message').forEach((el) => {
+    const messageId = el.dataset.messageId;
+    if (!messageId) return;
+
+    el.oncontextmenu = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Fetch the message data from the DB to get the full object
+      supabase
+        .from('messages')
+        .select('*, author:profiles(username, avatar_color)')
+        .eq('id', messageId)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            showContextMenu(e.clientX, e.clientY, CONTEXT_MENUS.message(data, el));
+          }
+        });
+    };
+  });
+}
+
+// Desktop (empty area)
+document.addEventListener('contextmenu', (e) => {
+  // Skip if inside an app surface already handled
+  if (e.target.closest('.room-icon')) return;
+  if (e.target.closest('.channel-item')) return;
+  if (e.target.closest('.message')) return;
+  if (e.target.closest('.win95-menu')) return;
+  if (e.target.closest('#win95-start-menu')) return;
+
+  e.preventDefault();
+  showContextMenu(e.clientX, e.clientY, CONTEXT_MENUS.desktop());
+});
+
+// Taskbar
+const taskbarEl = document.getElementById('win95-taskbar');
+if (taskbarEl) {
+  taskbarEl.oncontextmenu = (e) => {
+    // Only trigger if right-clicked the empty taskbar area
+    if (e.target.closest('.win95-task-btn')) return;
+    if (e.target.closest('#win95-start-btn')) return;
+    if (e.target.closest('#win95-tray')) return;
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, CONTEXT_MENUS.taskbar());
+  };
+}
+
+/* ============================================================
+   ACTION HELPERS
+   ============================================================ */
+
+function copyToClipboard(text) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => { });
+  } else {
+    // Fallback for older browsers
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { }
+    ta.remove();
+  }
+}
+
+async function renameRoom(room) {
+  const newName = prompt('Rename room:', room.name);
+  if (!newName || !newName.trim() || newName === room.name) return;
+  const { error } = await supabase
+    .from('rooms')
+    .update({ name: newName.trim().slice(0, 40) })
+    .eq('id', room.id);
+  if (error) return alert(error.message);
+  await loadRooms();
+}
+
+async function deleteRoom(room) {
+  const ok = await win95Confirm(
+    'Delete Room',
+    'Delete room "<b>' + escapeHtml(room.name) + '</b>"?<br><br>' +
+    'All channels and messages inside will be <b>permanently</b> deleted.'
+  );
+  if (!ok) return;
+
+  const { error } = await supabase.from('rooms').delete().eq('id', room.id);
+  if (error) return alert(error.message);
+
+  if (state.currentRoom?.id === room.id) {
+    state.currentRoom = null;
+    state.currentChannel = null;
+    $('room-name').textContent = '...';
+    $('channels-container').innerHTML = '';
+    $('messages').innerHTML = '';
+    $('channel-name').textContent = '-';
+  }
+  await loadRooms();
+}
+
+async function renameChannel(channel) {
+  const newName = prompt('Rename channel:', channel.name);
+  if (!newName || !newName.trim() || newName === channel.name) return;
+  const slug = newName.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 30);
+  const { error } = await supabase
+    .from('channels')
+    .update({ name: slug })
+    .eq('id', channel.id);
+  if (error) return alert(error.message);
+  await loadChannels();
+}
+
+async function deleteChannel(channel) {
+  const ok = await win95Confirm(
+    'Delete Channel',
+    'Delete channel "<b>#' + escapeHtml(channel.name) + '</b>"?<br><br>' +
+    'All messages in this channel will be <b>permanently</b> deleted.'
+  );
+  if (!ok) return;
+
+  const { error } = await supabase.from('channels').delete().eq('id', channel.id);
+  if (error) return alert(error.message);
+
+  if (state.currentChannel?.id === channel.id) {
+    state.currentChannel = null;
+    $('channel-name').textContent = '-';
+    $('messages').innerHTML = '';
+  }
+  await loadChannels();
+}
+
+async function deleteMessage(msg, el) {
+  const preview = (msg.content || '').slice(0, 80);
+  const ok = await win95Confirm(
+    'Delete Message',
+    'Delete this message?<br><br>' +
+    '<i>"' + escapeHtml(preview) + ((msg.content || '').length > 80 ? '…' : '') + '"</i>'
+  );
+  if (!ok) return;
+  const { error } = await supabase.from('messages').delete().eq('id', msg.id);
+  if (error) return alert(error.message);
+  el?.remove();
+}
+
+/* ============================================================
+   PROPERTIES DIALOGS
+   ============================================================ */
+
+function showPropertiesDialog(title, rows) {
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.style.background = 'rgba(0,0,0,0.35)';
+
+  const rowsHtml = rows
+    .map((r) =>
+      '<div style="display:flex;padding:4px 0;">' +
+      '<div style="width:120px;color:#404040;font-weight:bold;">' + escapeHtml(r.label) + '</div>' +
+      '<div style="flex:1;">' + r.value + '</div>' +
+      '</div>'
+    )
+    .join('');
+
+  overlay.innerHTML =
+    '<div style="background:#c0c0c0;padding:2px;border:2px solid;' +
+    'border-color:#dfdfdf #404040 #404040 #dfdfdf;min-width:380px;max-width:90vw;' +
+    'box-shadow:1px 1px 0 #000;font-family:\'MS Sans Serif\',Arial,sans-serif;">' +
+    '<div style="background:#000080;color:#fff;padding:3px 6px;font-weight:bold;font-size:12px;' +
+    'display:flex;justify-content:space-between;align-items:center;">' +
+    '<span>' + escapeHtml(title) + '</span>' +
+    '</div>' +
+    '<div style="padding:14px;">' + rowsHtml + '</div>' +
+    '<div style="padding:8px 16px 12px;text-align:right;">' +
+    '<button id="props-ok" style="min-width:70px;padding:4px;background:#c0c0c0;border:2px solid;' +
+    'border-color:#dfdfdf #404040 #404040 #dfdfdf;font-family:inherit;font-size:12px;cursor:pointer;">' +
+    'OK</button>' +
+    '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+  overlay.querySelector('#props-ok').onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+function showRoomProperties(room) {
+  const code = room.invite_code || '—';
+  const codeDisplay = room.invite_code
+    ? '<code style="font-family:\'Courier New\',monospace;font-weight:bold;letter-spacing:1px;">' +
+    escapeHtml(code) +
+    '</code> <button id="props-invite-btn" style="margin-left:8px;padding:2px 6px;font-size:11px;' +
+    'background:var(--win-bg);border:2px solid;border-color:var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'cursor:pointer;font-family:inherit;color:var(--text);">Show Invite</button>'
+    : '—';
+
+  showPropertiesDialog('Room Properties', [
+    { label: 'Name:', value: escapeHtml(room.name) },
+    { label: 'Invite Code:', value: codeDisplay },
+    { label: 'Room ID:', value: '<code style="font-size:11px;">' + escapeHtml(room.id) + '</code>' },
+    { label: 'Owner:', value: room.owner_id === state.user.id ? 'You' : escapeHtml(room.owner_id.slice(0, 8) + '...') },
+    { label: 'Created:', value: new Date(room.created_at).toLocaleString() },
+    { label: 'Channels:', value: String(state.channels.length || 0) },
+  ]);
+
+  // Hook up the button after the dialog is in the DOM
+  setTimeout(() => {
+    const btn = document.getElementById('props-invite-btn');
+    if (btn) {
+      btn.onclick = () => {
+        Sound.click();
+        // Close properties dialog
+        document.querySelector('.lightbox-overlay')?.remove();
+        showInviteDialog(room);
+      };
+    }
+  }, 0);
+}
+
+function showChannelProperties(channel) {
+  showPropertiesDialog('Channel Properties', [
+    { label: 'Name:', value: '#' + escapeHtml(channel.name) },
+    { label: 'Channel ID:', value: '<code style="font-size:11px;">' + escapeHtml(channel.id) + '</code>' },
+    { label: 'Room:', value: escapeHtml(state.currentRoom?.name || '-') },
+    { label: 'Created:', value: new Date(channel.created_at).toLocaleString() },
+  ]);
+}
+
+function showMessageProperties(msg) {
+  showPropertiesDialog('Message Properties', [
+    { label: 'Author:', value: escapeHtml(msg.author?.username || 'Unknown') },
+    { label: 'Time:', value: new Date(msg.created_at).toLocaleString() },
+    { label: 'Message ID:', value: '<code style="font-size:11px;">' + escapeHtml(msg.id) + '</code>' },
+    { label: 'Length:', value: String((msg.content || '').length) + ' chars' },
+    ...(msg.attachment_url
+      ? [{ label: 'Attachment:', value: '<a href="' + escapeHtml(msg.attachment_url) + '" target="_blank" style="color:#000080;">View image</a>' }]
+      : []),
+  ]);
+}
+
+function showDesktopProperties() {
+  showPropertiesDialog('Pulsar95 Properties', [
+    { label: 'Version:', value: 'Pulsar95 (Silent Build)' },
+    { label: 'Logged in as:', value: escapeHtml(state.profile?.username || '-') },
+    { label: 'Rooms:', value: String(state.rooms.length) },
+    { label: 'Channels:', value: String(state.channels.length) },
+    { label: 'Session:', value: state.user ? escapeHtml(state.user.email) : 'Not logged in' },
+  ]);
+}
+
+/* ============================================================
+   HOOK INTO EXISTING RENDER FUNCTIONS
+   ============================================================ */
+
+// Wrap existing functions to reattach context menus after renders
+const _origLoadRooms = loadRooms;
+window.loadRooms = async function () {
+  await _origLoadRooms();
+  attachRoomContextMenus();
+};
+
+const _origLoadChannels = loadChannels;
+window.loadChannels = async function () {
+  await _origLoadChannels();
+  attachChannelContextMenus();
+};
+
+const _origLoadMessages = loadMessages;
+window.loadMessages = async function () {
+  await _origLoadMessages();
+  attachMessageContextMenus();
+};
+
+const _origAppendMessage = appendMessage;
+window.appendMessage = function (msg, scroll) {
+  _origAppendMessage(msg, scroll);
+  attachMessageContextMenus();
+};
+
+// Also attach on initial load, in case the app rendered before we hooked
+setTimeout(() => {
+  attachRoomContextMenus();
+  attachChannelContextMenus();
+  attachMessageContextMenus();
+}, 500);
+
+/* ============================================================
+   WINDOW POSITION PERSISTENCE
+   ============================================================ */
+
+const POSITION_KEY = 'pulsar95_window_pos';
+
+function saveWindowPosition(win) {
+  if (!win || !win.classList.contains('draggable')) return;
+  const left = parseFloat(win.style.left);
+  const top = parseFloat(win.style.top);
+  if (isNaN(left) || isNaN(top)) return;
+
+  // Save per-window (login vs main app)
+  const key = win.closest('#auth-screen') ? 'auth' : 'app';
+  const stored = JSON.parse(localStorage.getItem(POSITION_KEY) || '{}');
+  stored[key] = { left, top };
+  localStorage.setItem(POSITION_KEY, JSON.stringify(stored));
+}
+
+function restoreWindowPosition(win) {
+  if (!win) return;
+  const key = win.closest('#auth-screen') ? 'auth' : 'app';
+  const stored = JSON.parse(localStorage.getItem(POSITION_KEY) || '{}');
+  const pos = stored[key];
+
+  if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
+    // Clamp to viewport (taskbar is 32px)
+    const maxLeft = window.innerWidth - 100;
+    const maxTop = window.innerHeight - 32 - 30;
+    const left = Math.max(0, Math.min(maxLeft, pos.left));
+    const top = Math.max(0, Math.min(maxTop, pos.top));
+
+    win.style.left = left + 'px';
+    win.style.top = top + 'px';
+    win.style.position = 'fixed';
+  }
+}
+
+// Hook into the drag engine — save on drag end
+document.addEventListener('pointerup', () => {
+  document.querySelectorAll('.window.draggable').forEach(saveWindowPosition);
+});
+
+// Restore on load
+setTimeout(() => {
+  document.querySelectorAll('.window').forEach(restoreWindowPosition);
+}, 100);
+
+/* ============================================================
+   LOAD SAVED THEME ON STARTUP
+   ============================================================ */
+
+
+loadSavedTheme();
+
+/* ============================================================
+   DISPLAY PROPERTIES DIALOG (theme picker)
+   ============================================================ */
+
+
+function showDisplayProperties() {
+  // Remove any existing dialog
+  document.getElementById('display-props')?.remove();
+
+  const currentTheme = getCurrentTheme();
+  let selectedTheme = currentTheme;
+
+  const themeOptions = Object.entries(THEMES)
+    .map(([key, t]) =>
+      '<option value="' + key + '"' + (key === currentTheme ? ' selected' : '') + '>' +
+      t.icon + ' ' + escapeHtml(t.name) +
+      '</option>'
+    )
+    .join('');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'display-props';
+  overlay.style.cssText =
+    'position: fixed; inset: 0; background: rgba(0,0,0,0.35);' +
+    'display: flex; align-items: center; justify-content: center;' +
+    'z-index: 999998; font-family: "MS Sans Serif", Arial, sans-serif;';
+
+  overlay.innerHTML =
+    '<div style="' +
+    'background: var(--win-bg); padding: 2px;' +
+    'border: 2px solid;' +
+    'border-color: var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'min-width: 420px; max-width: 90vw;' +
+    'box-shadow: 1px 1px 0 #000;' +
+    '">' +
+    '<div style="' +
+    'background: linear-gradient(to right, var(--title-bg), var(--title-bg-end));' +
+    'color: var(--title-text); padding: 3px 6px;' +
+    'font-weight: bold; font-size: 12px;' +
+    'display: flex; justify-content: space-between; align-items: center;' +
+    '">' +
+    '<span>🎨 Display Properties</span>' +
+    '<span style="font-size: 10px;">X</span>' +
+    '</div>' +
+    '<div style="padding: 16px;">' +
+    '<div style="display:flex; gap:16px; align-items:flex-start;">' +
+    '<div style="font-size: 48px;">🖥️</div>' +
+    '<div style="flex:1;">' +
+    '<div style="font-size: 12px; margin-bottom: 8px; color: var(--text);">' +
+    'Color scheme:' +
+    '</div>' +
+    '<select id="theme-select" style="' +
+    'width: 100%; padding: 4px; font-family: inherit; font-size: 12px;' +
+    'background: var(--chat-bg); color: var(--chat-text);' +
+    'border: 2px solid; border-color: var(--win-border-dark) var(--win-border-light) var(--win-border-light) var(--win-border-dark);' +
+    '">' + themeOptions + '</select>' +
+    '<div style="margin-top: 12px; padding: 8px; ' +
+    'background: var(--win-bg-alt); border: 2px inset var(--win-border-mid);' +
+    'font-size: 11px; color: var(--text-muted);">' +
+    '🖼 Preview' +
+    '</div>' +
+    '<div id="theme-preview" style="' +
+    'margin-top: 6px; height: 60px; border: 2px solid var(--win-border-dark);' +
+    'display: flex; align-items: flex-end; padding: 6px;' +
+    'background: var(--desktop-bg);' +
+    '">' +
+    '<div style="background: var(--win-bg); padding: 4px; border: 2px solid;' +
+    'border-color: var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'font-size: 10px; color: var(--text);">Window</div>' +
+    '</div>' +
+    '</div>' +
+    '</div>' +
+    '</div>' +
+    '<div style="padding: 8px 16px 12px; display: flex; gap: 6px; justify-content: flex-end;">' +
+    '<button id="dp-ok" style="min-width:80px;padding:5px;background:var(--win-bg);' +
+    'border:2px solid;border-color:var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'font-family:inherit;font-size:12px;cursor:pointer;color:var(--text);">OK</button>' +
+    '<button id="dp-cancel" style="min-width:80px;padding:5px;background:var(--win-bg);' +
+    'border:2px solid;border-color:var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'font-family:inherit;font-size:12px;cursor:pointer;color:var(--text);">Cancel</button>' +
+    '<button id="dp-apply" style="min-width:80px;padding:5px;background:var(--win-bg);' +
+    'border:2px solid;border-color:var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'font-family:inherit;font-size:12px;cursor:pointer;color:var(--text);">Apply</button>' +
+    '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+
+  const select = overlay.querySelector('#theme-select');
+
+  // Live preview on dropdown change
+  select.onchange = () => {
+    selectedTheme = select.value;
+    applyTheme(selectedTheme);
+  };
+
+  overlay.querySelector('#dp-ok').onclick = () => {
+    applyTheme(selectedTheme);
+    overlay.remove();
+  };
+
+  overlay.querySelector('#dp-cancel').onclick = () => {
+    applyTheme(currentTheme); // revert
+    overlay.remove();
+  };
+
+  overlay.querySelector('#dp-apply').onclick = () => {
+    applyTheme(selectedTheme);
+  };
+
+  // Click outside → cancel
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      applyTheme(currentTheme);
+      overlay.remove();
+    }
+  };
+}
+
+/* ============================================================
+   LOAD SAVED THEME ON STARTUP
+   ============================================================ */
+
+loadSavedTheme();
+
+/* ============================================================
+   TYPING INDICATORS (Supabase Presence)
+   ============================================================ */
+
+const TYPING_DEBOUNCE_MS = 400;    // how often we broadcast while typing
+const TYPING_TIMEOUT_MS = 3000;    // how long before a user "stops typing"
+const TYPING_COOLDOWN_MS = 1500;   // minimum gap between broadcasts
+
+let myTypingTimeout = null;
+let myTypingLastSent = 0;
+let myTypingActive = false;
+
+/**
+ * Subscribe to presence for a channel.
+ * Called from selectChannel so we switch presence when the user changes channels.
+ */
+async function subscribeTyping(channelId) {
+  // Tear down previous presence
+  if (state.presenceChannel) {
+    try {
+      await state.presenceChannel.untrack();
+      await supabase.removeChannel(state.presenceChannel);
+    } catch (e) { }
+    state.presenceChannel = null;
+  }
+
+  state.typingUsers.clear();
+  renderTypingIndicator();
+
+  if (!channelId || !state.user) return;
+
+  const presenceKey = 'typing:' + channelId;
+
+  const ch = supabase.channel(presenceKey, {
+    config: {
+      presence: { key: state.user.id },
+    },
+  });
+
+  // When someone starts/stops typing
+  ch.on('presence', { event: 'sync' }, () => {
+    const newState = ch.presenceState();
+    const now = Date.now();
+
+    // Clear all — rebuild from presence state
+    const seen = new Set();
+
+    Object.values(newState).forEach((presences) => {
+      presences.forEach((p) => {
+        if (p.user_id === state.user.id) return; // skip self
+        if (!p.typing) return;
+        if (now - (p.ts || 0) > TYPING_TIMEOUT_MS) return;
+        seen.add(p.user_id);
+
+        // Refresh their timeout
+        const existing = state.typingUsers.get(p.user_id);
+        if (existing?.timeoutId) clearTimeout(existing.timeoutId);
+
+        const timeoutId = setTimeout(() => {
+          state.typingUsers.delete(p.user_id);
+          renderTypingIndicator();
+        }, TYPING_TIMEOUT_MS);
+
+        state.typingUsers.set(p.user_id, {
+          username: p.username || 'someone',
+          timeoutId,
+        });
+      });
+    });
+
+    // Remove anyone no longer typing
+    for (const [userId, info] of state.typingUsers) {
+      if (!seen.has(userId)) {
+        if (info.timeoutId) clearTimeout(info.timeoutId);
+        state.typingUsers.delete(userId);
+      }
+    }
+
+    renderTypingIndicator();
+  });
+
+  // When someone joins or leaves
+  ch.on('presence', { event: 'join' }, ({ newPresences }) => {
+    // Nothing needed — sync handles it
+  });
+
+  ch.on('presence', { event: 'leave' }, ({ leftPresences }) => {
+    leftPresences.forEach((p) => {
+      const info = state.typingUsers.get(p.user_id);
+      if (info?.timeoutId) clearTimeout(info.timeoutId);
+      state.typingUsers.delete(p.user_id);
+    });
+    renderTypingIndicator();
+  });
+
+  await ch.subscribe(async (status) => {
+    if (status === 'SUBSCRIBED') {
+      // Track ourselves as "not typing" initially
+      await ch.track({
+        user_id: state.user.id,
+        username: state.profile?.username || 'someone',
+        typing: false,
+        ts: Date.now(),
+      });
+    }
+  });
+
+  state.presenceChannel = ch;
+}
+
+/**
+ * Called on every keystroke in the composer. Debounced broadcast.
+ */
+async function notifyTyping() {
+  if (!state.presenceChannel) return;
+
+  const now = Date.now();
+  const isFirstKeystroke = !myTypingActive;
+
+  myTypingActive = true;
+
+  // Clear the "stop typing" timer
+  if (myTypingTimeout) clearTimeout(myTypingTimeout);
+
+  // Broadcast only if enough time has passed (throttle)
+  if (isFirstKeystroke || now - myTypingLastSent > TYPING_COOLDOWN_MS) {
+    myTypingLastSent = now;
+    try {
+      await state.presenceChannel.track({
+        user_id: state.user.id,
+        username: state.profile?.username || 'someone',
+        typing: true,
+        ts: now,
+      });
+    } catch (e) { }
+  }
+
+  // After user stops typing for TYPING_TIMEOUT_MS, broadcast stop
+  myTypingTimeout = setTimeout(() => {
+    stopTyping();
+  }, TYPING_TIMEOUT_MS);
+}
+
+/**
+ * Called when the user stops typing or sends a message.
+ */
+async function stopTyping() {
+  myTypingActive = false;
+  if (myTypingTimeout) {
+    clearTimeout(myTypingTimeout);
+    myTypingTimeout = null;
+  }
+  if (!state.presenceChannel) return;
+  try {
+    await state.presenceChannel.track({
+      user_id: state.user.id,
+      username: state.profile?.username || 'someone',
+      typing: false,
+      ts: Date.now(),
+    });
+  } catch (e) { }
+}
+
+/**
+ * Update the typing indicator UI based on state.typingUsers.
+ */
+function renderTypingIndicator() {
+  const el = document.getElementById('typing-indicator');
+  if (!el) return;
+
+  const usernames = [...state.typingUsers.values()].map((u) => u.username);
+  const textEl = el.querySelector('.typing-text');
+
+  if (usernames.length === 0) {
+    el.classList.remove('visible');
+    if (textEl) textEl.textContent = '';
+    return;
+  }
+
+  let text;
+  if (usernames.length === 1) {
+    text = usernames[0] + ' is typing';
+  } else if (usernames.length === 2) {
+    text = usernames[0] + ' and ' + usernames[1] + ' are typing';
+  } else if (usernames.length === 3) {
+    text = usernames[0] + ', ' + usernames[1] + ' and 1 other are typing';
+  } else {
+    text = usernames.length + ' people are typing';
+  }
+
+  if (textEl) textEl.textContent = text;
+  el.classList.add('visible');
+}
+
+/**
+ * Hook composer input — send typing presence on every keystroke.
+ */
+const composerInput = document.getElementById('message-input');
+if (composerInput) {
+  composerInput.addEventListener('input', () => {
+    if (composerInput.value.trim().length > 0) {
+      notifyTyping();
+    } else {
+      stopTyping();
+    }
+  });
+
+  // Stop typing when the input loses focus
+  composerInput.addEventListener('blur', () => {
+    stopTyping();
+  });
+
+  // Stop typing when the user sends (existing submit handler also runs)
+  composerInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      stopTyping();
+    }
+  });
+}
+
+// Stop typing when the tab loses focus
+window.addEventListener('blur', () => {
+  stopTyping();
+});
+
+// Clean up on unload
+window.addEventListener('beforeunload', () => {
+  if (state.presenceChannel) {
+    state.presenceChannel.untrack().catch(() => { });
+  }
+});
+
+/* ============================================================
+   INVITE CODES
+   ============================================================ */
+
+function showInviteDialog(room) {
+  const inviteCode = room.invite_code;
+  if (!inviteCode) {
+    alert('This room has no invite code yet. Refresh and try again.');
+    return;
+  }
+
+  const inviteUrl = window.location.origin + '/?invite=' + inviteCode;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'invite-dialog';
+  overlay.style.cssText =
+    'position: fixed; inset: 0; background: rgba(0,0,0,0.35);' +
+    'display: flex; align-items: center; justify-content: center;' +
+    'z-index: 999998; font-family: "MS Sans Serif", Arial, sans-serif;';
+
+  overlay.innerHTML =
+    '<div style="' +
+    'background: var(--win-bg); padding: 2px;' +
+    'border: 2px solid;' +
+    'border-color: var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'min-width: 420px; max-width: 90vw;' +
+    'box-shadow: 1px 1px 0 #000;' +
+    '">' +
+    '<div style="' +
+    'background: linear-gradient(to right, var(--title-bg), var(--title-bg-end));' +
+    'color: var(--title-text); padding: 3px 6px;' +
+    'font-weight: bold; font-size: 12px;' +
+    'display: flex; justify-content: space-between; align-items: center;' +
+    '">' +
+    '<span>🎫 Invite to ' + escapeHtml(room.name) + '</span>' +
+    '<span style="font-size: 10px;">X</span>' +
+    '</div>' +
+    '<div style="padding: 16px;">' +
+    '<div style="font-size: 12px; color: var(--text); margin-bottom: 10px;">' +
+    'Share this code or link with anyone you want to invite:' +
+    '</div>' +
+
+    '<div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Invite Code</div>' +
+    '<div style="display:flex; gap:6px; margin-bottom: 12px;">' +
+    '<input id="invite-code-input" readonly value="' + escapeHtml(inviteCode) + '" ' +
+    'style="flex:1; font-family: \'Courier New\', monospace; font-size: 16px; font-weight: bold;' +
+    'letter-spacing: 2px; padding: 6px 10px; background: var(--chat-bg); color: var(--chat-text);' +
+    'border: 2px solid; border-color: var(--win-border-dark) var(--win-border-light) var(--win-border-light) var(--win-border-dark);' +
+    'text-align: center;">' +
+    '<button id="invite-copy-code" style="min-width:70px;padding:4px 8px;background:var(--win-bg);' +
+    'border:2px solid;border-color:var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'font-family:inherit;font-size:11px;cursor:pointer;color:var(--text);">Copy</button>' +
+    '</div>' +
+
+    '<div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Share Link</div>' +
+    '<div style="display:flex; gap:6px;">' +
+    '<input id="invite-url-input" readonly value="' + escapeHtml(inviteUrl) + '" ' +
+    'style="flex:1; font-family: inherit; font-size: 11px; padding: 6px 8px;' +
+    'background: var(--chat-bg); color: var(--chat-text);' +
+    'border: 2px solid; border-color: var(--win-border-dark) var(--win-border-light) var(--win-border-light) var(--win-border-dark);">' +
+    '<button id="invite-copy-url" style="min-width:70px;padding:4px 8px;background:var(--win-bg);' +
+    'border:2px solid;border-color:var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'font-family:inherit;font-size:11px;cursor:pointer;color:var(--text);">Copy</button>' +
+    '</div>' +
+
+    '<div style="margin-top: 12px; padding: 8px; background: var(--win-bg-alt);' +
+    'border: 2px inset var(--win-border-mid); font-size: 11px; color: var(--text-muted);">' +
+    'ℹ️ Anyone with this link can join the room. They still need their own account.' +
+    '</div>' +
+
+    '</div>' +
+    '<div style="padding: 8px 16px 12px; display: flex; gap: 6px; justify-content: flex-end;">' +
+    '<button id="invite-ok" style="min-width:80px;padding:5px;background:var(--win-bg);' +
+    'border:2px solid;border-color:var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
+    'font-family:inherit;font-size:12px;cursor:pointer;color:var(--text);">OK</button>' +
+    '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+
+  // Copy handlers
+  overlay.querySelector('#invite-copy-code').onclick = () => {
+    copyToClipboard(inviteCode);
+    Sound.click();
+    flashButton(overlay.querySelector('#invite-copy-code'), 'Copied!');
+  };
+
+  overlay.querySelector('#invite-copy-url').onclick = () => {
+    copyToClipboard(inviteUrl);
+    Sound.click();
+    flashButton(overlay.querySelector('#invite-copy-url'), 'Copied!');
+  };
+
+  overlay.querySelector('#invite-ok').onclick = () => {
+    Sound.click();
+    overlay.remove();
+  };
+
+  overlay.onclick = (e) => {
+    if (e.target === overlay) overlay.remove();
+  };
+}
+
+function flashButton(btn, text) {
+  const original = btn.textContent;
+  btn.textContent = text;
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = original;
+    btn.disabled = false;
+  }, 1200);
+}
+
+/* ============================================================
+   DETECT ?invite= ON PAGE LOAD
+   ============================================================ */
+
+async function checkInviteOnLoad() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('invite');
+  if (!code) return;
+
+  // Wait for the app to boot (user must be logged in)
+  // We poll every 500ms until state.user exists
+  let tries = 0;
+  while (!state.user && tries < 20) {
+    await new Promise((r) => setTimeout(r, 500));
+    tries++;
+  }
+
+  if (!state.user) {
+    // Not logged in — save for later and let login flow handle it
+    sessionStorage.setItem('pulsar95_pending_invite', code);
+    // Clean URL so it doesn't get stuck
+    history.replaceState({}, '', window.location.pathname);
+    return;
+  }
+
+  // Look up the room
+  const { data: room, error } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('invite_code', code)
+    .single();
+
+  if (error || !room) {
+    alert('That invite link is invalid or has expired.');
+    history.replaceState({}, '', window.location.pathname);
+    return;
+  }
+
+  // Already a member?
+  const { data: existing } = await supabase
+    .from('room_members')
+    .select('*')
+    .eq('room_id', room.id)
+    .eq('user_id', state.user.id)
+    .maybeSingle();
+
+  if (existing) {
+    // Just switch to it
+    await selectRoom(room);
+    history.replaceState({}, '', window.location.pathname);
+    return;
+  }
+
+  // Ask to join
+  const ok = await win95Confirm(
+    'Join Room?',
+    'You\'ve been invited to join room <b>"' + escapeHtml(room.name) + '"</b>.<br><br>' +
+    'Join this room?'
+  );
+
+  history.replaceState({}, '', window.location.pathname);
+
+  if (!ok) return;
+
+  // Join
+  const { error: joinErr } = await supabase
+    .from('room_members')
+    .insert({ room_id: room.id, user_id: state.user.id });
+
+  if (joinErr && !joinErr.message.includes('duplicate')) {
+    alert('Failed to join room: ' + joinErr.message);
+    return;
+  }
+
+  Sound.success();
+  await loadRooms();
+  await selectRoom(room);
+}
+
+// Run the invite check after boot
+// The check polls for state.user, so we can kick it off immediately
+setTimeout(checkInviteOnLoad, 500);
+
+async function processInviteCode(code) {
+  if (!state.user) return;
+
+  const { data: room, error } = await supabase
+    .from('rooms')
+    .select('*')
+    .eq('invite_code', code)
+    .single();
+
+  if (error || !room) {
+    alert('That invite link is invalid or has expired.');
+    return;
+  }
+
+  const { data: existing } = await supabase
+    .from('room_members')
+    .select('*')
+    .eq('room_id', room.id)
+    .eq('user_id', state.user.id)
+    .maybeSingle();
+
+  if (existing) {
+    await selectRoom(room);
+    return;
+  }
+
+  const ok = await win95Confirm(
+    'Join Room?',
+    'You\'ve been invited to join room <b>"' + escapeHtml(room.name) + '"</b>.<br><br>' +
+    'Join this room?'
+  );
+
+  if (!ok) return;
+
+  const { error: joinErr } = await supabase
+    .from('room_members')
+    .insert({ room_id: room.id, user_id: state.user.id });
+
+  if (joinErr && !joinErr.message.includes('duplicate')) {
+    alert('Failed to join room: ' + joinErr.message);
+    return;
+  }
+
+  Sound.success();
+  await loadRooms();
+  await selectRoom(room);
+}

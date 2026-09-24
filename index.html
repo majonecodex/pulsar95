@@ -1,98 +1,168 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pulsar95 - Cosmic Chat</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#10022;</text></svg>">
-<link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pulsar95 - Cosmic Chat</title>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#10022;</text></svg>">
+  <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
-
-<div id="auth-screen" class="window">
-  <div class="title-bar">
-    <span class="title-bar-text">&#10022; Pulsar95 - Sign In</span>
-    <div class="title-bar-controls">
-      <button aria-label="Minimize"></button>
-      <button aria-label="Maximize"></button>
-      <button aria-label="Close"></button>
-    </div>
+  <!-- Win95 Boot Sequence -->
+  <div id="boot-screen">
+    <div id="boot-content"></div>
+    <div class="boot-hint">Click anywhere to skip...</div>
   </div>
-  <div class="window-body">
-    <div class="brand-header">
-      <span class="brand-icon">&#10022;</span>
-      <span class="brand-name">Pulsar95</span>
-      <span class="brand-tag">Cosmic chat for the retro web</span>
-    </div>
-
-    <div class="field-row-stacked">
-      <label for="email">Email:</label>
-      <input id="email" type="email" placeholder="you@example.com" autocomplete="email">
-    </div>
-    <div class="field-row-stacked">
-      <label for="password">Password:</label>
-      <input id="password" type="password" placeholder="********" autocomplete="current-password">
-    </div>
-    <div class="field-row-stacked">
-      <label for="username">Display name (new accounts only):</label>
-      <input id="username" type="text" placeholder="starwatcher" autocomplete="off">
-    </div>
-
-    <div class="field-row button-row">
-      <button id="login-btn">Log In</button>
-      <button id="signup-btn">Create Account</button>
-    </div>
-
-    <p id="auth-error" class="error"></p>
-    <p id="auth-info" class="info"></p>
-  </div>
-</div>
-
-<div id="app-screen" class="hidden">
-  <div class="window app-window">
+  <div id="auth-screen" class="window">
     <div class="title-bar">
-      <span class="title-bar-text">&#10022; Pulsar95 - <span id="status-text">Connected</span></span>
+      <span class="title-bar-text">&#10022; Pulsar95 - Sign In</span>
       <div class="title-bar-controls">
         <button aria-label="Minimize"></button>
         <button aria-label="Maximize"></button>
-        <button id="logout-btn" aria-label="Close" title="Log out and close"></button>
+        <button aria-label="Close"></button>
       </div>
     </div>
-    <div class="window-body app-body">
+    <div class="window-body">
+      <div class="brand-header">
+        <span class="brand-icon">&#10022;</span>
+        <span class="brand-name">Pulsar95</span>
+        <span class="brand-tag">Cosmic chat for the retro web</span>
+      </div>
 
-      <aside class="room-rail">
-        <div id="rooms-container"></div>
-        <button class="room-icon add-room" id="add-room-btn" title="Create new room">+</button>
-      </aside>
+      <div class="field-row-stacked">
+        <label for="email">Email:</label>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="field-row-stacked">
+        <label for="password">Password:</label>
+        <input id="password" type="password" placeholder="********" autocomplete="current-password">
+      </div>
+      <div class="field-row-stacked">
+        <label for="username">Display name (new accounts only):</label>
+        <input id="username" type="text" placeholder="starwatcher" autocomplete="off">
+      </div>
 
-      <aside class="channel-pane">
-        <div class="room-header" id="room-name">...</div>
-        <div class="channels" id="channels-container"></div>
-        <button class="add-channel" id="add-channel-btn">+ New Channel</button>
-        <div class="user-panel">
-          <span class="user-dot" id="user-dot"></span>
-          <span id="user-name">...</span>
-        </div>
-      </aside>
+      <div class="field-row button-row">
+        <button id="login-btn">Log In</button>
+        <button id="signup-btn">Create Account</button>
+      </div>
 
-      <main class="chat">
-        <div class="chat-header">
-          <span class="channel-hash">#</span>
-          <span id="channel-name">general</span>
-          <span class="chat-spacer"></span>
-          <span class="chat-count" id="member-count"></span>
-        </div>
-        <div class="messages" id="messages"></div>
-        <form class="composer" id="composer">
-          <input id="message-input" placeholder="Type a message..." autocomplete="off" maxlength="2000">
-          <button type="submit">Send</button>
-        </form>
-      </main>
-
+      <p id="auth-error" class="error"></p>
+      <p id="auth-info" class="info"></p>
     </div>
   </div>
-</div>
 
-<script type="module" src="app.js"></script>
+  <div id="app-screen" class="hidden">
+    <div class="window app-window">
+      <div class="title-bar">
+        <span class="title-bar-text">&#10022; Pulsar95 - <span id="status-text">Connected</span></span>
+        <div class="title-bar-controls">
+          <button aria-label="Minimize"></button>
+          <button aria-label="Maximize"></button>
+          <button id="logout-btn" aria-label="Close" title="Log out and close"></button>
+        </div>
+      </div>
+      <div class="window-body app-body">
+
+        <aside class="room-rail">
+          <div id="rooms-container"></div>
+          <button class="room-icon add-room" id="add-room-btn" title="Create new room">+</button>
+        </aside>
+
+        <aside class="channel-pane">
+          <div class="room-header" id="room-name">...</div>
+          <div class="channels" id="channels-container"></div>
+          <button class="add-channel" id="add-channel-btn">+ New Channel</button>
+          <div class="user-panel">
+            <span class="user-dot" id="user-dot"></span>
+            <span id="user-name">...</span>
+          </div>
+        </aside>
+
+        <main class="chat">
+          <div class="chat-header">
+            <span class="channel-hash">#</span>
+            <span id="channel-name">general</span>
+            <span class="chat-spacer"></span>
+            <span class="chat-count" id="member-count"></span>
+          </div>
+          <div class="messages" id="messages"></div>
+          <div class="typing-indicator" id="typing-indicator" aria-live="polite">
+            <span class="typing-text"></span>
+            <span class="typing-dots">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </span>
+          </div>
+          <form class="composer" id="composer">
+            <input type="file" id="file-input" accept="image/*" style="display:none">
+            <button type="button" id="attach-btn" title="Attach image">📎</button>
+            <input id="message-input" placeholder="Type a message..." autocomplete="off" maxlength="2000">
+            <button type="submit">Send</button>
+          </form>
+        </main>
+
+      </div>
+    </div>
+  </div>
+  <!-- Windows 95 Taskbar -->
+  <div id="win95-taskbar">
+    <button id="win95-start-btn">
+      <span class="start-logo"></span>
+      <span>Start</span>
+    </button>
+
+    <div id="win95-task-buttons"></div>
+
+    <div id="win95-tray">
+      <span class="tray-icon" title="Volume">🔊</span>
+      <span class="tray-icon" title="Network: Connected">🌐</span>
+      <span id="win95-clock">--:-- --</span>
+    </div>
+  </div>
+
+  <!-- Start menu (opens from Start button) -->
+  <div id="win95-start-menu">
+    <div class="start-menu-sidebar">Pulsar95</div>
+    <div class="start-menu-items">
+      <div class="start-menu-item" data-action="programs">
+        <span class="menu-icon">📁</span>
+        <span>Programs</span>
+        <span class="menu-arrow">▶</span>
+      </div>
+      <div class="start-menu-item" data-action="documents">
+        <span class="menu-icon">📄</span>
+        <span>Documents</span>
+        <span class="menu-arrow">▶</span>
+      </div>
+      <div class="start-menu-item" data-action="settings">
+        <span class="menu-icon">⚙️</span>
+        <span>Settings</span>
+      </div>
+      <div class="start-menu-item" data-action="find">
+        <span class="menu-icon">🔍</span>
+        <span>Find</span>
+      </div>
+      <div class="start-menu-item" data-action="help">
+        <span class="menu-icon">❓</span>
+        <span>Help</span>
+      </div>
+      <div class="start-menu-item" data-action="run">
+        <span class="menu-icon">▶️</span>
+        <span>Run...</span>
+      </div>
+      <div class="start-menu-divider"></div>
+      <div class="start-menu-item" data-action="shutdown">
+        <span class="menu-icon">🔌</span>
+        <span>Shut Down...</span>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="app.js"></script>
 </body>
+
 </html>
