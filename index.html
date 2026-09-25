@@ -77,6 +77,22 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!--                    PULSAR95 DESKTOP                        -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div id="desktop" class="desktop hidden">
+    <!-- Desktop icons container -->
+    <div id="desktop-icons" class="desktop-icons"></div>
+
+    <!-- Window layer — app windows will be appended here -->
+    <div id="window-layer" class="window-layer"></div>
+
+    <!-- Selection box (rubber band) -->
+    <div id="selection-box" class="selection-box"></div>
+
+    <!-- Desktop context menu (already exists globally, but we anchor here) -->
+  </div>
+
   <!-- ═══ Main App ═══ -->
   <div id="app-screen" class="hidden">
     <div class="window app-window">
@@ -146,6 +162,10 @@
           <form class="composer" id="composer">
             <input type="file" id="file-input" accept="image/*" style="display:none">
             <button type="button" id="attach-btn" title="Attach image">📎</button>
+
+            <!-- @mention autocomplete dropdown -->
+            <div id="mention-autocomplete" class="mention-autocomplete" role="listbox"></div>
+
             <input id="message-input" placeholder="Message #general" autocomplete="off" maxlength="2000">
             <button type="submit">Send</button>
           </form>

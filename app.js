@@ -87,6 +87,7 @@ $('logout-btn').onclick = async () => {
       await supabase.removeChannel(state.presenceChannel);
     } catch (e) { }
   }
+  if (window.pulsarOS && window.pulsarOS.closeAllWindows) window.pulsarOS.closeAllWindows();
   await supabase.auth.signOut();
   isBooted = false;
   location.reload();
@@ -99,6 +100,7 @@ supabase.auth.onAuthStateChange(async (_event, session) => {
   } else {
     $('auth-screen').classList.remove('hidden');
     $('app-screen').classList.add('hidden');
+    if (window.pulsarOS && window.pulsarOS.hideDesktop) window.pulsarOS.hideDesktop();
   }
 });
 
@@ -111,8 +113,13 @@ async function bootApp() {
   isBooted = true;
 
   $('auth-screen').classList.add('hidden');
-  $('app-screen').classList.remove('hidden');
-  $('status-text').textContent = 'Connected';
+
+  // Show the OS desktop layer
+  if (window.pulsarOS && window.pulsarOS.showDesktop) window.pulsarOS.showDesktop();
+
+  // Hide the legacy chat screen — it opens as a window later
+  $('app-screen').classList.add('hidden');
+  if ($('status-text')) $('status-text').textContent = 'Connected';
 
   Sound.notify();
 
@@ -124,8 +131,8 @@ async function bootApp() {
     avatar_color: colorFor(state.user.email),
   };
 
-  $('user-name').textContent = state.profile.username;
-  $('user-dot').style.background = state.profile.avatar_color;
+  if ($('user-name')) $('user-name').textContent = state.profile.username;
+  if ($('user-dot')) $('user-dot').style.background = state.profile.avatar_color;
 
   await loadRooms();
 
@@ -181,6 +188,12 @@ async function bootApp() {
     sessionStorage.removeItem('pulsar95_pending_invite');
     setTimeout(() => processInviteCode(pendingInvite), 800);
   }
+
+  // Auto-open chat window so desktop isn't empty
+  setTimeout(() => {
+    const appScreen = document.getElementById('app-screen');
+    if (appScreen) appScreen.classList.remove('hidden');
+  }, 400);
 }
 
 /* ============================================================
@@ -194,6 +207,7 @@ async function loadRooms() {
 
   state.rooms = data || [];
   const container = $('rooms-container');
+  if (!container) return;
   container.innerHTML = '';
 
   state.rooms.forEach((r) => {
@@ -218,10 +232,10 @@ async function loadRooms() {
         if (state.currentRoom?.id === r.id) {
           state.currentRoom = null;
           state.currentChannel = null;
-          $('room-name').textContent = '...';
-          $('channels-container').innerHTML = '';
-          $('messages').innerHTML = '';
-          $('channel-name').textContent = '-';
+          if ($('room-name')) $('room-name').textContent = '...';
+          if ($('channels-container')) $('channels-container').innerHTML = '';
+          if ($('messages')) $('messages').innerHTML = '';
+          if ($('channel-name')) $('channel-name').textContent = '-';
         }
         await loadRooms();
       };
@@ -243,16 +257,18 @@ async function loadRooms() {
   } else {
     state.currentRoom = null;
     state.currentChannel = null;
-    $('room-name').textContent = 'No rooms yet';
-    $('channels-container').innerHTML = '';
-    $('messages').innerHTML =
-      '<div class="empty-state">No rooms yet. Click + to create one.</div>';
+    if ($('room-name')) $('room-name').textContent = 'No rooms yet';
+    if ($('channels-container')) $('channels-container').innerHTML = '';
+    if ($('messages')) {
+      $('messages').innerHTML =
+        '<div class="empty-state">No rooms yet. Click + to create one.</div>';
+    }
   }
 }
 
 async function selectRoom(room) {
   state.currentRoom = room;
-  $('room-name').textContent = room.name;
+  if ($('room-name')) $('room-name').textContent = room.name;
   document.querySelectorAll('.room-icon').forEach((el) => el.classList.remove('active'));
   document.querySelector('.room-icon[data-room-id="' + room.id + '"]')?.classList.add('active');
 
@@ -288,6 +304,7 @@ async function loadChannels() {
 
   state.channels = data || [];
   const container = $('channels-container');
+  if (!container) return;
   container.innerHTML = '';
 
   const isOwner = state.currentRoom.owner_id === state.user.id;
@@ -312,8 +329,8 @@ async function loadChannels() {
         if (error) return alert(error.message);
         if (state.currentChannel?.id === c.id) {
           state.currentChannel = null;
-          $('channel-name').textContent = '-';
-          $('messages').innerHTML = '';
+          if ($('channel-name')) $('channel-name').textContent = '-';
+          if ($('messages')) $('messages').innerHTML = '';
         }
         await loadChannels();
       };
@@ -335,16 +352,18 @@ async function loadChannels() {
     await selectChannel(state.channels[0]);
   } else {
     state.currentChannel = null;
-    $('channel-name').textContent = 'no channels';
-    $('messages').innerHTML =
-      '<div class="empty-state">No channels yet. Click + New Channel.</div>';
+    if ($('channel-name')) $('channel-name').textContent = 'no channels';
+    if ($('messages')) {
+      $('messages').innerHTML =
+        '<div class="empty-state">No channels yet. Click + New Channel.</div>';
+    }
   }
 }
 
 async function selectChannel(channel) {
   state.currentChannel = channel;
-  $('channel-name').textContent = channel.name;
-  $('message-input').placeholder = 'Message #' + channel.name;
+  if ($('channel-name')) $('channel-name').textContent = channel.name;
+  if ($('message-input')) $('message-input').placeholder = 'Message #' + channel.name;
   document.querySelectorAll('.channel-item').forEach((el) => el.classList.remove('active'));
   document.querySelector('.channel-item[data-channel-id="' + channel.id + '"]')?.classList.add('active');
   await loadMessages();
@@ -375,6 +394,7 @@ async function loadMessages() {
     .order('created_at').limit(200);
 
   const container = $('messages');
+  if (!container) return;
   container.innerHTML = '';
 
   if (!data || data.length === 0) {
@@ -388,6 +408,7 @@ async function loadMessages() {
 
 function appendMessage(msg, scroll = false) {
   const container = $('messages');
+  if (!container) return;
   const empty = container.querySelector('.empty-state');
   if (empty) empty.remove();
 
@@ -410,7 +431,7 @@ function appendMessage(msg, scroll = false) {
     '<span class="message-author">' + escapeHtml(author) + '</span>' +
     '<span class="message-time">' + escapeHtml(time) + '</span>' +
     '</div>' +
-    '<div class="message-text">' + escapeHtml(msg.content) + '</div>' +
+    '<div class="message-text">' + highlightMentions(msg.content) + '</div>' +
     (msg.attachment_url
       ? '<div class="message-image" data-full="' + escapeHtml(msg.attachment_url) + '">' +
       '<img src="' + escapeHtml(msg.attachment_url) + '" alt="attachment" loading="lazy">' +
@@ -438,9 +459,15 @@ function appendMessage(msg, scroll = false) {
   if (scroll) scrollToBottom();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COMPOSER — WITH AI BOT HOOK (this is what was missing)
-   ═══════════════════════════════════════════════════════════ */
+function highlightMentions(text) {
+  if (!text) return '';
+  return escapeHtml(text)
+    .replace(/@(\w+)/g, '<span class="mention-highlight">@$1</span>');
+}
+
+/* ============================================================
+   COMPOSER
+   ============================================================ */
 
 $('composer').onsubmit = async (e) => {
   e.preventDefault();
@@ -470,13 +497,13 @@ $('composer').onsubmit = async (e) => {
     input.value = content;
   } else {
     Sound.success();
-    summonPulsar(content);   // ⬅️ THE MISSING LINE
+    summonPulsar(content);
   }
 };
 
 const scrollToBottom = () => {
   const el = $('messages');
-  el.scrollTop = el.scrollHeight;
+  if (el) el.scrollTop = el.scrollHeight;
 };
 
 /* ============================================================
@@ -530,7 +557,7 @@ function win95Confirm(title, message) {
     overlay.style.cssText =
       'position: fixed; inset: 0; background: rgba(0,0,0,0.3);' +
       'display: flex; align-items: center; justify-content: center;' +
-      'z-index: 9999; font-family: "MS Sans Serif", Arial, sans-serif;';
+      'z-index: 999999; font-family: "MS Sans Serif", Arial, sans-serif;';
     overlay.innerHTML =
       '<div style="background: var(--win-bg); padding: 2px; border: 2px solid;' +
       'border-color: var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);' +
@@ -557,110 +584,6 @@ function win95Confirm(title, message) {
     overlay.querySelector('#w95-no').onclick = () => { overlay.remove(); resolve(false); };
   });
 }
-
-/* ============================================================
-   DRAGGABLE WINDOWS
-   ============================================================ */
-
-function makeDraggable(win) {
-  const titleBar = win.querySelector('.title-bar');
-  if (!titleBar) return;
-  if (window.matchMedia('(max-width: 720px)').matches) return;
-  win.classList.add('draggable');
-
-  let isDragging = false;
-  let startX = 0, startY = 0, startLeft = 0, startTop = 0;
-
-  function ensurePositioned() {
-    const rect = win.getBoundingClientRect();
-    win.style.left = rect.left + 'px';
-    win.style.top = rect.top + 'px';
-    win.style.width = rect.width + 'px';
-    win.style.height = rect.height + 'px';
-  }
-
-  function onPointerDown(e) {
-    if (e.target.closest('button')) return;
-    if (e.button !== undefined && e.button !== 0) return;
-    ensurePositioned();
-    isDragging = true;
-    startX = e.clientX; startY = e.clientY;
-    startLeft = parseFloat(win.style.left) || 0;
-    startTop = parseFloat(win.style.top) || 0;
-    win.classList.add('dragging');
-    document.body.classList.add('dragging-active');
-    e.preventDefault();
-    document.addEventListener('pointermove', onPointerMove);
-    document.addEventListener('pointerup', onPointerUp);
-  }
-
-  function onPointerMove(e) {
-    if (!isDragging) return;
-    const dx = e.clientX - startX, dy = e.clientY - startY;
-    let newLeft = startLeft + dx, newTop = startTop + dy;
-    const minLeft = -(win.offsetWidth - 100);
-    const maxLeft = window.innerWidth - 100;
-    const maxTop = window.innerHeight - 32 - 30;
-    newLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
-    newTop = Math.max(0, Math.min(maxTop, newTop));
-    win.style.left = newLeft + 'px';
-    win.style.top = newTop + 'px';
-  }
-
-  function onPointerUp() {
-    if (!isDragging) return;
-    isDragging = false;
-    win.classList.remove('dragging');
-    document.body.classList.remove('dragging-active');
-    document.removeEventListener('pointermove', onPointerMove);
-    document.removeEventListener('pointerup', onPointerUp);
-    saveWindowPosition(win);
-  }
-
-  titleBar.addEventListener('pointerdown', onPointerDown);
-}
-
-const POSITION_KEY = 'pulsar95_window_pos';
-
-function saveWindowPosition(win) {
-  if (!win?.classList.contains('draggable')) return;
-  const left = parseFloat(win.style.left);
-  const top = parseFloat(win.style.top);
-  if (isNaN(left) || isNaN(top)) return;
-  const key = win.closest('#auth-screen') ? 'auth' : 'app';
-  const stored = JSON.parse(localStorage.getItem(POSITION_KEY) || '{}');
-  stored[key] = { left, top };
-  localStorage.setItem(POSITION_KEY, JSON.stringify(stored));
-}
-
-function restoreWindowPosition(win) {
-  if (!win) return;
-  const key = win.closest('#auth-screen') ? 'auth' : 'app';
-  const stored = JSON.parse(localStorage.getItem(POSITION_KEY) || '{}');
-  const pos = stored[key];
-  if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
-    const maxLeft = window.innerWidth - 100;
-    const maxTop = window.innerHeight - 32 - 30;
-    win.style.left = Math.max(0, Math.min(maxLeft, pos.left)) + 'px';
-    win.style.top = Math.max(0, Math.min(maxTop, pos.top)) + 'px';
-    win.style.position = 'fixed';
-  }
-}
-
-document.querySelectorAll('.window').forEach(makeDraggable);
-const dragObserver = new MutationObserver(() => {
-  document.querySelectorAll('.window').forEach((w) => {
-    if (!w.dataset.dragReady) {
-      makeDraggable(w);
-      w.dataset.dragReady = '1';
-    }
-  });
-});
-dragObserver.observe(document.body, { childList: true, subtree: true });
-
-setTimeout(() => {
-  document.querySelectorAll('.window').forEach(restoreWindowPosition);
-}, 100);
 
 /* ============================================================
    BOOT SEQUENCE
@@ -851,56 +774,107 @@ function initTaskbar() {
     };
   }
 
-  window.updateTaskButtons = function () {
-    const tasks = [];
-    if (!$('app-screen').classList.contains('hidden')) {
-      tasks.push({
-        id: 'task-app', label: 'Pulsar95', icon: '💬', active: true,
-        onClick: () => {
-          const win = document.querySelector('#app-screen .window');
-          if (win) { win.style.zIndex = 1000; }
-        },
-      });
-    }
-    if (document.getElementById('lightbox-overlay')) {
-      tasks.push({
-        id: 'task-lightbox', label: 'Image Viewer', icon: '🖼', active: true,
-        onClick: () => { },
-      });
-    }
-    taskButtons.innerHTML = '';
-    tasks.forEach((t) => {
+  window.updateTaskButtons();
+}
+
+function updateTaskButtons() {
+  const taskButtons = document.getElementById('win95-task-buttons');
+  if (!taskButtons) return;
+
+  taskButtons.innerHTML = '';
+
+  // 1. Real OS windows (from the window manager)
+  if (window.pulsarOS && window.pulsarOS.getOpenWindows) {
+    window.pulsarOS.getOpenWindows().forEach((w) => {
       const btn = document.createElement('button');
-      btn.className = 'win95-task-btn' + (t.active ? ' active' : '');
-      btn.id = t.id;
-      btn.innerHTML = '<span class="task-icon">' + t.icon + '</span><span>' + t.label + '</span>';
-      btn.onclick = (e) => { e.stopPropagation(); Sound.click(); t.onClick(); };
+      btn.className = 'win95-task-btn' +
+        (w.focused && !w.minimized ? ' active' : '') +
+        (w.minimized ? ' minimized' : '');
+      btn.dataset.windowId = w.id;
+      btn.innerHTML =
+        '<span class="task-icon">' + escapeHtml(w.icon) + '</span>' +
+        '<span>' + escapeHtml(w.title) + '</span>';
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        Sound.click();
+        const entry = window.pulsarOS.getOpenWindows().find((x) => x.id === w.id);
+        if (entry?.minimized) {
+          window.pulsarOS.restoreWindow(w.id);
+        } else if (entry?.focused) {
+          window.pulsarOS.minimizeWindow(w.id);
+        } else {
+          window.pulsarOS.focusWindow(w.id);
+        }
+      };
       taskButtons.appendChild(btn);
     });
-  };
-  updateTaskButtons();
-
-  const appScreen = $('app-screen');
-  if (appScreen) {
-    new MutationObserver(updateTaskButtons).observe(appScreen, {
-      attributes: true, attributeFilter: ['class'],
-    });
   }
-  const bodyMo = new MutationObserver(() => {
-    clearTimeout(window._tbDebounce);
-    window._tbDebounce = setTimeout(updateTaskButtons, 80);
-  });
-  bodyMo.observe(document.body, { childList: true });
+
+  // 2. Legacy chat app (only if visible AND not managed by window system)
+  if (!$('app-screen').classList.contains('hidden') &&
+    !document.querySelector('.os-window[data-window-id="chat"]')) {
+    const btn = document.createElement('button');
+    btn.className = 'win95-task-btn active';
+    btn.id = 'task-app';
+    btn.innerHTML = '<span class="task-icon">💬</span><span>Pulsar95</span>';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      Sound.click();
+      const win = document.querySelector('#app-screen .window');
+      if (win) win.style.zIndex = 1000;
+    };
+    taskButtons.appendChild(btn);
+  }
+
+  // 3. Image lightbox
+  if (document.getElementById('lightbox-overlay')) {
+    const btn = document.createElement('button');
+    btn.className = 'win95-task-btn active';
+    btn.id = 'task-lightbox';
+    btn.innerHTML = '<span class="task-icon">🖼</span><span>Image Viewer</span>';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      Sound.click();
+      const lb = document.getElementById('lightbox-overlay');
+      if (lb) lb.style.zIndex = 100001;
+    };
+    taskButtons.appendChild(btn);
+  }
 }
+
+window.updateTaskButtons = updateTaskButtons;
+
+initTaskbar();
+
+/* ============================================================
+   START MENU ACTIONS
+   ============================================================ */
 
 function handleStartMenuAction(action) {
   switch (action) {
-    case 'programs': alert('Programs: Notepad, Calculator, Minesweeper... coming soon.'); break;
-    case 'documents':
-      if (state.rooms?.length) alert('Your rooms:\n\n' + state.rooms.map((r) => '• ' + r.name).join('\n'));
-      else alert('No rooms yet.');
+    case 'programs':
+      openWindow({
+        id: 'notepad',
+        title: 'Untitled - Notepad',
+        icon: '📝',
+        width: 560,
+        height: 400,
+        content:
+          '<textarea style="width:100%;height:100%;border:2px inset #808080;' +
+          'font-family:\'Courier New\',monospace;font-size:13px;padding:6px;' +
+          'resize:none;background:#fff;color:#000;outline:none;"></textarea>',
+      });
       break;
-    case 'settings': showDisplayProperties(); break;
+    case 'documents':
+      if (state.rooms?.length) {
+        alert('Your rooms:\n\n' + state.rooms.map((r) => '• ' + r.name).join('\n'));
+      } else {
+        alert('No rooms yet.');
+      }
+      break;
+    case 'settings':
+      showDisplayProperties();
+      break;
     case 'find':
       if (state.currentChannel) {
         const q = prompt('Find in #' + state.currentChannel.name + ':');
@@ -910,13 +884,28 @@ function handleStartMenuAction(action) {
             m.style.background = text.toLowerCase().includes(q.toLowerCase()) ? '#ffff99' : '';
           });
         }
-      } else alert('Open a channel first.');
+      } else {
+        alert('Open a channel first.');
+      }
       break;
     case 'help':
-      alert('Pulsar95 Help\n\n• Right-click a message you sent to delete it\n• Drag the blue title bar to move the window\n• Click 📎 to attach an image\n• Click the clock to show seconds\n• Mention @pulsar to talk to the AI bot');
+      alert(
+        'Pulsar95 Help\n\n' +
+        '• Right-click a message you sent to delete it\n' +
+        '• Drag the blue title bar to move the window\n' +
+        '• Click 📎 to attach an image\n' +
+        '• Click the clock to show seconds\n' +
+        '• Mention @pulsar to talk to the AI bot'
+      );
       break;
     case 'run': {
-      const cmd = prompt('Type a command:\n\n  about    — About Pulsar95\n  whoami   — Your username\n  logout   — Sign out\n  clear    — Reload the app\n');
+      const cmd = prompt(
+        'Type a command:\n\n' +
+        '  about    — About Pulsar95\n' +
+        '  whoami   — Your username\n' +
+        '  logout   — Sign out\n' +
+        '  clear    — Reload the app\n'
+      );
       if (cmd) {
         const c = cmd.trim().toLowerCase();
         if (c === 'about') alert('Pulsar95 — Cosmic chat for the retro web.');
@@ -927,7 +916,9 @@ function handleStartMenuAction(action) {
       }
       break;
     }
-    case 'shutdown': showShutdownScreen(); break;
+    case 'shutdown':
+      showShutdownScreen();
+      break;
   }
 }
 
@@ -947,8 +938,6 @@ function showShutdownScreen() {
   };
   document.body.appendChild(overlay);
 }
-
-initTaskbar();
 
 /* ============================================================
    CONTEXT MENUS
@@ -1010,9 +999,11 @@ const CONTEXT_MENUS = {
     { label: 'Tile Windows', disabled: true, action: () => { } },
     {
       label: 'Minimize All', action: () => {
-        document.querySelectorAll('.window').forEach((w) => {
-          w.style.left = '40px'; w.style.top = '40px';
-        });
+        if (window.pulsarOS && window.pulsarOS.getOpenWindows) {
+          window.pulsarOS.getOpenWindows().forEach((w) => {
+            if (!w.minimized) window.pulsarOS.minimizeWindow(w.id);
+          });
+        }
       }
     },
     { divider: true },
@@ -1122,6 +1113,8 @@ document.addEventListener('contextmenu', (e) => {
   if (e.target.closest('.win95-menu')) return;
   if (e.target.closest('#win95-start-menu')) return;
   if (e.target.closest('#win95-taskbar')) return;
+  if (e.target.closest('.os-window')) return;
+  if (e.target.closest('.desktop-icon')) return;
   e.preventDefault();
   showContextMenu(e.clientX, e.clientY, CONTEXT_MENUS.desktop());
 });
@@ -1174,10 +1167,10 @@ async function deleteRoom(room) {
   if (state.currentRoom?.id === room.id) {
     state.currentRoom = null;
     state.currentChannel = null;
-    $('room-name').textContent = '...';
-    $('channels-container').innerHTML = '';
-    $('messages').innerHTML = '';
-    $('channel-name').textContent = '-';
+    if ($('room-name')) $('room-name').textContent = '...';
+    if ($('channels-container')) $('channels-container').innerHTML = '';
+    if ($('messages')) $('messages').innerHTML = '';
+    if ($('channel-name')) $('channel-name').textContent = '-';
   }
   await loadRooms();
 }
@@ -1202,8 +1195,8 @@ async function deleteChannel(channel) {
   if (error) return alert(error.message);
   if (state.currentChannel?.id === channel.id) {
     state.currentChannel = null;
-    $('channel-name').textContent = '-';
-    $('messages').innerHTML = '';
+    if ($('channel-name')) $('channel-name').textContent = '-';
+    if ($('messages')) $('messages').innerHTML = '';
   }
   await loadChannels();
 }
@@ -1305,10 +1298,8 @@ function showMessageProperties(msg) {
   ]);
 }
 
-function showDesktopProperties() { showDisplayProperties(); }
-
 /* ============================================================
-   DISPLAY PROPERTIES DIALOG (theme picker)
+   DISPLAY PROPERTIES DIALOG
    ============================================================ */
 
 function showDisplayProperties() {
@@ -1500,7 +1491,7 @@ async function processInviteCode(code) {
 setTimeout(checkInviteOnLoad, 500);
 
 /* ============================================================
-   TYPING INDICATORS (Supabase Presence)
+   TYPING INDICATORS
    ============================================================ */
 
 async function subscribeTyping(channelId) {
@@ -1661,6 +1652,7 @@ function openLightbox(src, title) {
   const escHandler = (e) => { if (e.key === 'Escape') closeLightbox(); };
   document.addEventListener('keydown', escHandler);
   overlay._escHandler = escHandler;
+  if (window.updateTaskButtons) window.updateTaskButtons();
 }
 
 function closeLightbox() {
@@ -1668,6 +1660,7 @@ function closeLightbox() {
   if (!overlay) return;
   if (overlay._escHandler) document.removeEventListener('keydown', overlay._escHandler);
   overlay.remove();
+  if (window.updateTaskButtons) window.updateTaskButtons();
 }
 
 document.addEventListener('click', (e) => {
@@ -1679,7 +1672,7 @@ document.addEventListener('click', (e) => {
 });
 
 /* ============================================================
-   MOBILE UI — top bar, drawers, scrim
+   MOBILE UI
    ============================================================ */
 
 function setupMobileUI() {
@@ -1774,20 +1767,12 @@ function setupMobileUI() {
 setupMobileUI();
 
 /* ============================================================
-   LOAD SAVED THEME ON STARTUP
-   ============================================================ */
-
-loadSavedTheme();
-
-/* ============================================================
    AI BOT — @pulsar MENTIONS
    ============================================================ */
 
 async function summonPulsar(aiMessage) {
   if (!/@pulsar\b/i.test(aiMessage)) return;
   if (!state.currentChannel || !state.user) return;
-
-  console.log('[Pulsar AI] Sending to edge function:', aiMessage.slice(0, 60));
 
   try {
     const res = await fetch(
@@ -1802,20 +1787,1091 @@ async function summonPulsar(aiMessage) {
         }),
       }
     );
-
     const data = await res.json().catch(() => ({}));
-    console.log('[Pulsar AI] Response:', data);
-
-    if (!res.ok) {
-      console.warn('[Pulsar AI] Error:', data);
-    }
+    if (!res.ok) console.warn('[Pulsar AI] Error:', data);
   } catch (err) {
     console.warn('[Pulsar AI] Fetch failed:', err);
   }
 }
 
 /* ============================================================
-   DEBUG — expose internals
+   @MENTION AUTOCOMPLETE
+   ============================================================ */
+
+const mentionState = {
+  active: false,
+  startIndex: -1,
+  query: '',
+  users: [],
+  matches: [],
+  selectedIndex: 0,
+};
+
+function getCurrentChannelMembers() {
+  const userMap = new Map();
+
+  userMap.set('everyone', {
+    id: 'everyone',
+    username: 'everyone',
+    avatar_color: '#c00000',
+    isEveryone: true,
+  });
+
+  userMap.set('pulsar', {
+    id: '00000000-0000-0000-0000-000000000099',
+    username: 'Pulsar',
+    avatar_color: '#800080',
+    isBot: true,
+  });
+
+  if (state.profile?.username) {
+    userMap.set(state.profile.username.toLowerCase(), {
+      id: state.user?.id || 'me',
+      username: state.profile.username,
+      avatar_color: state.profile.avatar_color || '#000080',
+      isMe: true,
+    });
+  }
+
+  document.querySelectorAll('.message').forEach((msgEl) => {
+    const authorEl = msgEl.querySelector('.message-author');
+    const avatarEl = msgEl.querySelector('.message-avatar');
+    if (authorEl && avatarEl) {
+      const name = authorEl.textContent.trim();
+      const color = avatarEl.style.background || '#000080';
+      const key = name.toLowerCase();
+      if (!userMap.has(key)) {
+        userMap.set(key, { id: key, username: name, avatar_color: color });
+      }
+    }
+  });
+
+  return [...userMap.values()];
+}
+
+function openMentionDropdown(query) {
+  const dropdown = document.getElementById('mention-autocomplete');
+  if (!dropdown) return;
+
+  mentionState.users = getCurrentChannelMembers();
+  mentionState.query = (query || '').toLowerCase();
+  mentionState.selectedIndex = 0;
+
+  const matches = mentionState.query
+    ? mentionState.users.filter((u) => u.username.toLowerCase().includes(mentionState.query))
+    : mentionState.users;
+
+  if (matches.length === 0) {
+    closeMentionDropdown();
+    return;
+  }
+
+  mentionState.matches = matches;
+
+  dropdown.innerHTML = matches.map((u, i) =>
+    '<div class="mention-item' +
+    (u.isBot ? ' bot' : '') +
+    (i === mentionState.selectedIndex ? ' active' : '') +
+    '" data-username="' + escapeHtml(u.username) + '" data-index="' + i + '">' +
+    '<div class="mention-avatar" style="background:' + escapeHtml(u.avatar_color) + '">' +
+    escapeHtml(u.username.charAt(0).toUpperCase()) +
+    '</div>' +
+    '<span class="mention-name">@' + escapeHtml(u.username) + '</span>' +
+    (u.isBot ? '<span class="mention-badge">bot</span>' :
+      u.isEveryone ? '<span class="mention-badge">notify all</span>' :
+        u.isMe ? '<span class="mention-badge">you</span>' : '') +
+    '</div>'
+  ).join('');
+
+  const inputEl = document.getElementById('message-input');
+  if (inputEl) {
+    const rect = inputEl.getBoundingClientRect();
+    const dropdownHeight = Math.min(260, matches.length * 36 + 8);
+    dropdown.style.left = rect.left + 'px';
+    dropdown.style.width = Math.max(rect.width, 240) + 'px';
+    dropdown.style.top = (rect.top - dropdownHeight - 6) + 'px';
+    dropdown.style.bottom = 'auto';
+    dropdown.style.position = 'fixed';
+  }
+
+  dropdown.classList.add('open');
+  mentionState.active = true;
+
+  dropdown.querySelectorAll('.mention-item').forEach((item) => {
+    item.onclick = (e) => {
+      e.preventDefault();
+      insertMention(item.dataset.username);
+    };
+  });
+
+  const activeEl = dropdown.querySelector('.mention-item.active');
+  if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+}
+
+function closeMentionDropdown() {
+  const dropdown = document.getElementById('mention-autocomplete');
+  if (dropdown) dropdown.classList.remove('open');
+  mentionState.active = false;
+  mentionState.startIndex = -1;
+  mentionState.query = '';
+  mentionState.matches = [];
+}
+
+function insertMention(username) {
+  const input = document.getElementById('message-input');
+  if (!input) return;
+
+  const text = input.value;
+  const cursorPos = input.selectionStart;
+  const before = text.slice(0, mentionState.startIndex);
+  const after = text.slice(cursorPos);
+
+  const newText = before + '@' + username + ' ' + after;
+  input.value = newText;
+
+  const newPos = before.length + username.length + 2;
+  input.setSelectionRange(newPos, newPos);
+  input.focus();
+
+  closeMentionDropdown();
+}
+
+const mentionInput = document.getElementById('message-input');
+if (mentionInput) {
+  mentionInput.addEventListener('input', () => {
+    const cursorPos = mentionInput.selectionStart;
+    const text = mentionInput.value;
+    const beforeCursor = text.slice(0, cursorPos);
+    const lastAtIndex = beforeCursor.lastIndexOf('@');
+
+    if (lastAtIndex === -1) {
+      closeMentionDropdown();
+      return;
+    }
+
+    const charBefore = lastAtIndex > 0 ? beforeCursor[lastAtIndex - 1] : ' ';
+    if (charBefore !== ' ' && charBefore !== '\n' && lastAtIndex !== 0) {
+      closeMentionDropdown();
+      return;
+    }
+
+    const query = beforeCursor.slice(lastAtIndex + 1);
+    if (query.includes(' ') || query.length > 30) {
+      closeMentionDropdown();
+      return;
+    }
+
+    mentionState.startIndex = lastAtIndex;
+    openMentionDropdown(query);
+  });
+
+  mentionInput.addEventListener('keydown', (e) => {
+    if (!mentionState.active) return;
+    const matches = mentionState.matches || [];
+    if (matches.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      mentionState.selectedIndex = (mentionState.selectedIndex + 1) % matches.length;
+      updateActiveMention();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      mentionState.selectedIndex = (mentionState.selectedIndex - 1 + matches.length) % matches.length;
+      updateActiveMention();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      insertMention(matches[mentionState.selectedIndex].username);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMentionDropdown();
+    }
+  });
+
+  mentionInput.addEventListener('blur', () => {
+    setTimeout(closeMentionDropdown, 150);
+  });
+}
+
+function updateActiveMention() {
+  const dropdown = document.getElementById('mention-autocomplete');
+  if (!dropdown) return;
+  dropdown.querySelectorAll('.mention-item').forEach((item, i) => {
+    item.classList.toggle('active', i === mentionState.selectedIndex);
+    if (i === mentionState.selectedIndex) {
+      item.scrollIntoView({ block: 'nearest' });
+    }
+  });
+}
+
+window.addEventListener('resize', () => {
+  if (mentionState.active) closeMentionDropdown();
+});
+
+/* ============================================================
+   ALT + F4 — SHUTDOWN SEQUENCE
+   ============================================================ */
+
+function executeAltF4Shutdown() {
+  Sound.shutdown();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'altf4-shutdown';
+  overlay.style.cssText =
+    'position: fixed; inset: 0; background: #000; color: #c0c0c0;' +
+    'font-family: "Courier New", monospace; display: flex; flex-direction: column;' +
+    'align-items: center; justify-content: center; z-index: 99999999;' +
+    'font-size: 20px; text-align: center; padding: 40px;' +
+    'opacity: 0; transition: opacity 0.4s ease-out;';
+
+  overlay.innerHTML =
+    '<div id="altf4-content">' +
+    '<div style="color:#ffb000;margin-bottom:24px;font-size:24px;">' +
+    '&#9888; Windows is shutting down...' +
+    '</div>' +
+    '<div style="color:#808080;font-size:14px;font-family:\'MS Sans Serif\',Arial,sans-serif;">' +
+    'Closing Pulsar95 in 3 seconds...' +
+    '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+
+  requestAnimationFrame(() => {
+    overlay.style.opacity = '1';
+  });
+
+  let seconds = 3;
+  const countdownEl = overlay.querySelector('#altf4-content');
+  const interval = setInterval(() => {
+    seconds--;
+    if (seconds <= 0) {
+      clearInterval(interval);
+      showSafeToCloseMessage(overlay);
+    } else {
+      countdownEl.querySelector('div:last-child').textContent =
+        'Closing Pulsar95 in ' + seconds + ' second' + (seconds === 1 ? '' : 's') + '...';
+    }
+  }, 1000);
+}
+
+function showSafeToCloseMessage(overlay) {
+  overlay.innerHTML =
+    '<div style="color:#ffb000;font-size:22px;text-align:center;line-height:1.8;">' +
+    'It&#39;s now safe to turn off<br>your computer.' +
+    '</div>' +
+    '<div style="color:#606060;font-size:13px;margin-top:40px;' +
+    'font-family:\'MS Sans Serif\',Arial,sans-serif;">' +
+    'Click anywhere to restart Pulsar95' +
+    '</div>';
+
+  setTimeout(() => {
+    try {
+      window.open('', '_self').close();
+      window.close();
+    } catch (e) { }
+
+    setTimeout(() => {
+      const hintEl = overlay.querySelector('div:last-child');
+      if (hintEl && document.body.contains(overlay)) {
+        hintEl.innerHTML =
+          'Your browser blocked auto-close for security.<br>' +
+          '<span style="color:#ffb000;">Press Ctrl+W to close this tab</span>, ' +
+          'or click here to restart Pulsar95.';
+        hintEl.style.cursor = 'pointer';
+        hintEl.onclick = () => {
+          overlay.remove();
+          location.reload();
+        };
+      }
+    }, 500);
+  }, 800);
+
+  overlay.style.cursor = 'pointer';
+  overlay.onclick = () => {
+    overlay.remove();
+    location.reload();
+  };
+}
+
+const altF4Input = document.getElementById('message-input');
+if (altF4Input) {
+  altF4Input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const content = altF4Input.value.trim().toUpperCase();
+      if (
+        content === 'ALT + F4' ||
+        content === 'ALT+F4' ||
+        content === 'ALTF4' ||
+        content === 'ALT F4'
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        altF4Input.value = '';
+        executeAltF4Shutdown();
+      }
+    }
+  });
+}
+
+/* ============================================================
+   PULSAR95 DESKTOP — Icons, Selection, Drag
+   ============================================================ */
+
+const DESKTOP_ICONS = [
+  {
+    id: 'my-computer',
+    label: 'My Computer',
+    icon: '🖥️',
+    action: () => alert('My Computer\n\n💾  Local Disk (C:)\n📀  CD-ROM Drive (D:)\n\n(File explorer coming soon)'),
+    defaultPos: { x: 16, y: 16 },
+  },
+  {
+    id: 'my-documents',
+    label: 'My Documents',
+    icon: '📁',
+    action: () => alert('My Documents\n\n📄  readme.txt\n📁  My Pictures\n📁  My Music\n\n(File explorer coming soon)'),
+    defaultPos: { x: 16, y: 100 },
+  },
+  {
+    id: 'network',
+    label: 'Network Neighborhood',
+    icon: '🌐',
+    action: () => alert('Network Neighborhood\n\n🖥️  PULSAR95-PC\n🖥️  Guest (offline)\n\n(Network explorer coming soon)'),
+    defaultPos: { x: 16, y: 184 },
+  },
+  {
+    id: 'recycle-bin',
+    label: 'Recycle Bin',
+    icon: '🗑️',
+    action: () => alert('Recycle Bin is empty'),
+    defaultPos: { x: 16, y: 268 },
+  },
+  {
+    id: 'pulsar-chat',
+    label: 'Pulsar95 Chat',
+    icon: '💬',
+    action: () => {
+      const appScreen = document.getElementById('app-screen');
+      if (appScreen) {
+        appScreen.classList.remove('hidden');
+        const win = appScreen.querySelector('.window');
+        if (win) win.style.zIndex = 1000;
+      }
+      if (window.updateTaskButtons) window.updateTaskButtons();
+    },
+    defaultPos: { x: 16, y: 352 },
+  },
+  {
+    id: 'readme',
+    label: 'Read Me',
+    icon: '📄',
+    action: () => alert(
+      'Welcome to Pulsar95!\n\n' +
+      '• Double-click icons to open\n' +
+      '• Drag icons to rearrange\n' +
+      '• Right-click desktop for menu\n' +
+      '• Double-click "Pulsar95 Chat" to chat\n' +
+      '• Start → Programs for apps'
+    ),
+    defaultPos: { x: 16, y: 436 },
+  },
+];
+
+const DESKTOP_POS_KEY = 'pulsar95_desktop_icon_pos';
+let desktopIconPositions = {};
+let selectedDesktopIcons = new Set();
+
+function loadDesktopIconPositions() {
+  try {
+    desktopIconPositions = JSON.parse(localStorage.getItem(DESKTOP_POS_KEY) || '{}');
+  } catch (e) {
+    desktopIconPositions = {};
+  }
+}
+
+function saveDesktopIconPositions() {
+  localStorage.setItem(DESKTOP_POS_KEY, JSON.stringify(desktopIconPositions));
+}
+
+function buildDesktop() {
+  const container = document.getElementById('desktop-icons');
+  if (!container) return;
+
+  loadDesktopIconPositions();
+  container.innerHTML = '';
+
+  DESKTOP_ICONS.forEach((icon) => {
+    const pos = desktopIconPositions[icon.id] || icon.defaultPos;
+
+    const el = document.createElement('div');
+    el.className = 'desktop-icon';
+    el.dataset.iconId = icon.id;
+    el.style.left = pos.x + 'px';
+    el.style.top = pos.y + 'px';
+    el.innerHTML =
+      '<div class="icon-image">' + icon.icon + '</div>' +
+      '<div class="icon-label">' + escapeHtml(icon.label) + '</div>';
+
+    el.addEventListener('mousedown', (e) => {
+      if (e.button === 0) {
+        if (!selectedDesktopIcons.has(icon.id)) {
+          clearDesktopSelection();
+          selectedDesktopIcons.add(icon.id);
+          el.classList.add('selected');
+        }
+        startIconDrag(e, icon.id, el);
+      }
+    });
+
+    el.addEventListener('dblclick', () => {
+      Sound.click();
+      try {
+        icon.action();
+      } catch (err) {
+        console.error('Icon action failed:', err);
+      }
+    });
+
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showContextMenu(e.clientX, e.clientY, CONTEXT_MENUS.desktop());
+    });
+
+    container.appendChild(el);
+  });
+}
+
+function clearDesktopSelection() {
+  selectedDesktopIcons.clear();
+  document.querySelectorAll('.desktop-icon.selected').forEach((el) => {
+    el.classList.remove('selected');
+  });
+}
+
+let iconDragState = {
+  active: false,
+  startX: 0,
+  startY: 0,
+  dragStartPositions: {},
+};
+
+function startIconDrag(e, iconId, el) {
+  if (e.button !== 0) return;
+
+  const dragging = selectedDesktopIcons.has(iconId)
+    ? [...selectedDesktopIcons]
+    : [iconId];
+
+  iconDragState.active = true;
+  iconDragState.startX = e.clientX;
+  iconDragState.startY = e.clientY;
+  iconDragState.dragStartPositions = {};
+
+  dragging.forEach((id) => {
+    const iconEl = document.querySelector('.desktop-icon[data-icon-id="' + id + '"]');
+    if (!iconEl) return;
+    iconDragState.dragStartPositions[id] = {
+      x: parseFloat(iconEl.style.left) || 0,
+      y: parseFloat(iconEl.style.top) || 0,
+    };
+  });
+
+  document.body.classList.add('icon-dragging');
+  document.addEventListener('mousemove', onIconDragMove);
+  document.addEventListener('mouseup', onIconDragEnd);
+
+  e.preventDefault();
+}
+
+function onIconDragMove(e) {
+  if (!iconDragState.active) return;
+
+  const dx = e.clientX - iconDragState.startX;
+  const dy = e.clientY - iconDragState.startY;
+
+  Object.entries(iconDragState.dragStartPositions).forEach(([id, start]) => {
+    const iconEl = document.querySelector('.desktop-icon[data-icon-id="' + id + '"]');
+    if (!iconEl) return;
+
+    let newX = start.x + dx;
+    let newY = start.y + dy;
+
+    const desktop = document.getElementById('desktop');
+    const maxX = desktop.clientWidth - iconEl.offsetWidth - 4;
+    const maxY = desktop.clientHeight - iconEl.offsetHeight - 4;
+
+    newX = Math.max(4, Math.min(maxX, newX));
+    newY = Math.max(4, Math.min(maxY, newY));
+
+    iconEl.style.left = newX + 'px';
+    iconEl.style.top = newY + 'px';
+  });
+}
+
+function onIconDragEnd() {
+  if (!iconDragState.active) return;
+  iconDragState.active = false;
+  document.body.classList.remove('icon-dragging');
+  document.removeEventListener('mousemove', onIconDragMove);
+  document.removeEventListener('mouseup', onIconDragEnd);
+
+  document.querySelectorAll('.desktop-icon').forEach((el) => {
+    const id = el.dataset.iconId;
+    if (id) {
+      desktopIconPositions[id] = {
+        x: parseFloat(el.style.left) || 0,
+        y: parseFloat(el.style.top) || 0,
+      };
+    }
+  });
+  saveDesktopIconPositions();
+}
+
+let selectionBoxState = {
+  active: false,
+  startX: 0,
+  startY: 0,
+};
+
+function setupDesktopSelectionBox() {
+  const desktop = document.getElementById('desktop');
+  const box = document.getElementById('selection-box');
+  if (!desktop || !box) return;
+
+  desktop.addEventListener('mousedown', (e) => {
+    if (e.target !== desktop && !e.target.classList.contains('desktop-icons')) return;
+    if (e.button !== 0) return;
+
+    selectionBoxState.active = true;
+    selectionBoxState.startX = e.clientX;
+    selectionBoxState.startY = e.clientY;
+
+    box.style.left = e.clientX + 'px';
+    box.style.top = e.clientY + 'px';
+    box.style.width = '0px';
+    box.style.height = '0px';
+    box.classList.add('active');
+
+    document.body.classList.add('selecting');
+    document.addEventListener('mousemove', onSelectionMove);
+    document.addEventListener('mouseup', onSelectionEnd);
+
+    clearDesktopSelection();
+
+    e.preventDefault();
+  });
+}
+
+function onSelectionMove(e) {
+  if (!selectionBoxState.active) return;
+  const box = document.getElementById('selection-box');
+  if (!box) return;
+
+  const x1 = Math.min(selectionBoxState.startX, e.clientX);
+  const y1 = Math.min(selectionBoxState.startY, e.clientY);
+  const x2 = Math.max(selectionBoxState.startX, e.clientX);
+  const y2 = Math.max(selectionBoxState.startY, e.clientY);
+
+  box.style.left = x1 + 'px';
+  box.style.top = y1 + 'px';
+  box.style.width = (x2 - x1) + 'px';
+  box.style.height = (y2 - y1) + 'px';
+
+  document.querySelectorAll('.desktop-icon').forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    const intersects = !(
+      rect.right < x1 || rect.left > x2 || rect.bottom < y1 || rect.top > y2
+    );
+    if (intersects) {
+      el.classList.add('selected');
+      selectedDesktopIcons.add(el.dataset.iconId);
+    } else {
+      el.classList.remove('selected');
+      selectedDesktopIcons.delete(el.dataset.iconId);
+    }
+  });
+}
+
+function onSelectionEnd() {
+  if (!selectionBoxState.active) return;
+  selectionBoxState.active = false;
+  const box = document.getElementById('selection-box');
+  if (box) box.classList.remove('active');
+  document.body.classList.remove('selecting');
+  document.removeEventListener('mousemove', onSelectionMove);
+  document.removeEventListener('mouseup', onSelectionEnd);
+}
+
+function showDesktop() {
+  const desktop = document.getElementById('desktop');
+  if (desktop) desktop.classList.remove('hidden');
+}
+
+function hideDesktop() {
+  const desktop = document.getElementById('desktop');
+  if (desktop) desktop.classList.add('hidden');
+}
+
+buildDesktop();
+setupDesktopSelectionBox();
+
+/* ============================================================
+   PULSAR95 WINDOW MANAGER
+   ============================================================ */
+
+const WINDOW_POS_KEY = 'pulsar95_window_geometry';
+let openWindows = {};
+let topZIndex = 300;
+
+function loadWindowGeometry() {
+  try {
+    return JSON.parse(localStorage.getItem(WINDOW_POS_KEY) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveWindowGeometry(id, geometry) {
+  const all = loadWindowGeometry();
+  all[id] = geometry;
+  localStorage.setItem(WINDOW_POS_KEY, JSON.stringify(all));
+}
+
+function openWindow(options) {
+  const {
+    id,
+    title = 'Window',
+    icon = '📄',
+    width = 500,
+    height = 400,
+    x,
+    y,
+    content,
+    onClose,
+    onFocus,
+    resizable = true,
+    minimizable = true,
+    maximizable = true,
+  } = options;
+
+  if (openWindows[id]) {
+    focusWindow(id);
+    if (openWindows[id].element.classList.contains('minimized')) {
+      restoreWindow(id);
+    }
+    return openWindows[id].element;
+  }
+
+  const savedGeometry = loadWindowGeometry()[id];
+  const desktop = document.getElementById('desktop');
+  if (!desktop) return null;
+  const desktopRect = desktop.getBoundingClientRect();
+  const desktopWidth = desktopRect.width;
+  const desktopHeight = desktopRect.height;
+
+  const finalWidth = Math.min(width, desktopWidth - 40);
+  const finalHeight = Math.min(height, desktopHeight - 40);
+
+  const offset = (Object.keys(openWindows).length % 6) * 24;
+  const defaultX = Math.max(20, (desktopWidth - finalWidth) / 2 + offset - 60);
+  const defaultY = Math.max(20, (desktopHeight - finalHeight) / 2 + offset - 60);
+
+  const posX = x !== undefined ? x : (savedGeometry?.x ?? defaultX);
+  const posY = y !== undefined ? y : (savedGeometry?.y ?? defaultY);
+  const posW = savedGeometry?.width ?? finalWidth;
+  const posH = savedGeometry?.height ?? finalHeight;
+
+  const win = document.createElement('div');
+  win.className = 'os-window';
+  win.dataset.windowId = id;
+  win.style.left = posX + 'px';
+  win.style.top = posY + 'px';
+  win.style.width = posW + 'px';
+  win.style.height = posH + 'px';
+  win.style.zIndex = ++topZIndex;
+
+  win.innerHTML =
+    '<div class="win-titlebar">' +
+    '<div class="win-icon">' + escapeHtml(icon) + '</div>' +
+    '<div class="win-title">' + escapeHtml(title) + '</div>' +
+    '<div class="win-controls">' +
+    (minimizable ? '<button class="win-btn win-min" title="Minimize">_</button>' : '') +
+    (maximizable ? '<button class="win-btn win-max" title="Maximize">□</button>' : '') +
+    '<button class="win-btn win-close" title="Close">✕</button>' +
+    '</div>' +
+    '</div>' +
+    '<div class="win-body"></div>' +
+    (resizable ?
+      '<div class="win-resize win-resize-n"></div>' +
+      '<div class="win-resize win-resize-s"></div>' +
+      '<div class="win-resize win-resize-e"></div>' +
+      '<div class="win-resize win-resize-w"></div>' +
+      '<div class="win-resize win-resize-ne"></div>' +
+      '<div class="win-resize win-resize-nw"></div>' +
+      '<div class="win-resize win-resize-se"></div>' +
+      '<div class="win-resize win-resize-sw"></div>'
+      : '');
+
+  const body = win.querySelector('.win-body');
+  if (typeof content === 'string') {
+    body.innerHTML = content;
+  } else if (content instanceof HTMLElement) {
+    body.appendChild(content);
+  }
+
+  const layer = document.getElementById('window-layer');
+  if (!layer) return null;
+  layer.appendChild(win);
+
+  openWindows[id] = {
+    element: win,
+    title,
+    icon,
+    onClose,
+    onFocus,
+    resizable,
+    maximizable,
+    minimizable,
+    maximized: false,
+    previousGeometry: null,
+  };
+
+  win.querySelector('.win-close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeWindow(id);
+  });
+
+  win.querySelector('.win-min')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    minimizeWindow(id);
+  });
+
+  win.querySelector('.win-max')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleMaximizeWindow(id);
+  });
+
+  const titlebar = win.querySelector('.win-titlebar');
+  titlebar.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.win-btn')) return;
+    startWindowDrag(e, id);
+  });
+
+  win.addEventListener('mousedown', () => {
+    focusWindow(id);
+  });
+
+  if (resizable) {
+    win.querySelectorAll('.win-resize').forEach((handle) => {
+      handle.addEventListener('mousedown', (e) => {
+        const cls = handle.className;
+        const dir = cls.replace('win-resize', '').replace('win-resize-', '').trim();
+        startWindowResize(e, id, dir);
+      });
+    });
+  }
+
+  focusWindow(id);
+
+  if (window.updateTaskButtons) window.updateTaskButtons();
+
+  return win;
+}
+
+function focusWindow(id) {
+  const entry = openWindows[id];
+  if (!entry) return;
+
+  entry.element.style.zIndex = ++topZIndex;
+
+  document.querySelectorAll('.os-window').forEach((el) => {
+    el.classList.toggle('focused', el.dataset.windowId === id);
+  });
+
+  entry.onFocus?.();
+
+  if (window.updateTaskButtons) window.updateTaskButtons();
+}
+
+function closeWindow(id) {
+  const entry = openWindows[id];
+  if (!entry) return;
+
+  const el = entry.element;
+  saveWindowGeometry(id, {
+    x: parseFloat(el.style.left),
+    y: parseFloat(el.style.top),
+    width: parseFloat(el.style.width),
+    height: parseFloat(el.style.height),
+  });
+
+  entry.onClose?.();
+  el.remove();
+  delete openWindows[id];
+
+  const remaining = Object.keys(openWindows);
+  if (remaining.length > 0) {
+    let topId = remaining[0];
+    let topZ = -1;
+    remaining.forEach((wId) => {
+      const z = parseInt(openWindows[wId].element.style.zIndex, 10) || 0;
+      if (z > topZ) { topZ = z; topId = wId; }
+    });
+    focusWindow(topId);
+  }
+
+  if (window.updateTaskButtons) window.updateTaskButtons();
+}
+
+function minimizeWindow(id) {
+  const entry = openWindows[id];
+  if (!entry) return;
+
+  entry.element.classList.add('minimized');
+
+  const remaining = Object.keys(openWindows).filter((wId) => {
+    const other = openWindows[wId];
+    return !other.element.classList.contains('minimized');
+  });
+
+  if (remaining.length > 0) {
+    let topId = remaining[0];
+    let topZ = -1;
+    remaining.forEach((wId) => {
+      const z = parseInt(openWindows[wId].element.style.zIndex, 10) || 0;
+      if (z > topZ) { topZ = z; topId = wId; }
+    });
+    focusWindow(topId);
+  } else {
+    document.querySelectorAll('.os-window').forEach((el) => {
+      el.classList.remove('focused');
+    });
+  }
+
+  if (window.updateTaskButtons) window.updateTaskButtons();
+}
+
+function restoreWindow(id) {
+  const entry = openWindows[id];
+  if (!entry) return;
+  entry.element.classList.remove('minimized');
+  focusWindow(id);
+  if (window.updateTaskButtons) window.updateTaskButtons();
+}
+
+function toggleMaximizeWindow(id) {
+  const entry = openWindows[id];
+  if (!entry || !entry.maximizable) return;
+
+  const el = entry.element;
+
+  if (entry.maximized) {
+    if (entry.previousGeometry) {
+      el.style.left = entry.previousGeometry.x + 'px';
+      el.style.top = entry.previousGeometry.y + 'px';
+      el.style.width = entry.previousGeometry.width + 'px';
+      el.style.height = entry.previousGeometry.height + 'px';
+    }
+    el.classList.remove('maximized');
+    entry.maximized = false;
+  } else {
+    entry.previousGeometry = {
+      x: parseFloat(el.style.left),
+      y: parseFloat(el.style.top),
+      width: parseFloat(el.style.width),
+      height: parseFloat(el.style.height),
+    };
+    el.classList.add('maximized');
+    entry.maximized = true;
+  }
+}
+
+let windowDragState = {
+  active: false,
+  id: null,
+  startX: 0,
+  startY: 0,
+  startLeft: 0,
+  startTop: 0,
+};
+
+function startWindowDrag(e, id) {
+  const entry = openWindows[id];
+  if (!entry) return;
+  if (entry.maximized) return;
+
+  const el = entry.element;
+  windowDragState.active = true;
+  windowDragState.id = id;
+  windowDragState.startX = e.clientX;
+  windowDragState.startY = e.clientY;
+  windowDragState.startLeft = parseFloat(el.style.left) || 0;
+  windowDragState.startTop = parseFloat(el.style.top) || 0;
+
+  document.body.classList.add('window-dragging');
+  document.addEventListener('mousemove', onWindowDragMove);
+  document.addEventListener('mouseup', onWindowDragEnd);
+
+  e.preventDefault();
+}
+
+function onWindowDragMove(e) {
+  if (!windowDragState.active) return;
+  const entry = openWindows[windowDragState.id];
+  if (!entry) return;
+
+  const el = entry.element;
+  const desktop = document.getElementById('desktop');
+  const maxX = desktop.clientWidth - el.offsetWidth;
+  const maxY = desktop.clientHeight - el.offsetHeight;
+
+  let newLeft = windowDragState.startLeft + (e.clientX - windowDragState.startX);
+  let newTop = windowDragState.startTop + (e.clientY - windowDragState.startY);
+
+  newLeft = Math.max(-el.offsetWidth + 100, Math.min(maxX, newLeft));
+  newTop = Math.max(0, Math.min(maxY, newTop));
+
+  el.style.left = newLeft + 'px';
+  el.style.top = newTop + 'px';
+}
+
+function onWindowDragEnd() {
+  if (!windowDragState.active) return;
+  const id = windowDragState.id;
+  windowDragState.active = false;
+  document.body.classList.remove('window-dragging');
+  document.removeEventListener('mousemove', onWindowDragMove);
+  document.removeEventListener('mouseup', onWindowDragEnd);
+
+  const entry = openWindows[id];
+  if (entry) {
+    saveWindowGeometry(id, {
+      x: parseFloat(entry.element.style.left),
+      y: parseFloat(entry.element.style.top),
+      width: parseFloat(entry.element.style.width),
+      height: parseFloat(entry.element.style.height),
+    });
+  }
+}
+
+let windowResizeState = {
+  active: false,
+  id: null,
+  dir: '',
+  startX: 0,
+  startY: 0,
+  startLeft: 0,
+  startTop: 0,
+  startWidth: 0,
+  startHeight: 0,
+};
+
+function startWindowResize(e, id, dir) {
+  const entry = openWindows[id];
+  if (!entry || !entry.resizable) return;
+  if (entry.maximized) return;
+
+  const el = entry.element;
+  windowResizeState.active = true;
+  windowResizeState.id = id;
+  windowResizeState.dir = dir;
+  windowResizeState.startX = e.clientX;
+  windowResizeState.startY = e.clientY;
+  windowResizeState.startLeft = parseFloat(el.style.left) || 0;
+  windowResizeState.startTop = parseFloat(el.style.top) || 0;
+  windowResizeState.startWidth = parseFloat(el.style.width) || el.offsetWidth;
+  windowResizeState.startHeight = parseFloat(el.style.height) || el.offsetHeight;
+
+  document.body.classList.add('window-resizing');
+  document.addEventListener('mousemove', onWindowResizeMove);
+  document.addEventListener('mouseup', onWindowResizeEnd);
+
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function onWindowResizeMove(e) {
+  if (!windowResizeState.active) return;
+  const entry = openWindows[windowResizeState.id];
+  if (!entry) return;
+
+  const el = entry.element;
+  const dx = e.clientX - windowResizeState.startX;
+  const dy = e.clientY - windowResizeState.startY;
+  const dir = windowResizeState.dir;
+
+  let newLeft = windowResizeState.startLeft;
+  let newTop = windowResizeState.startTop;
+  let newWidth = windowResizeState.startWidth;
+  let newHeight = windowResizeState.startHeight;
+
+  const MIN_W = 200;
+  const MIN_H = 120;
+
+  if (dir.includes('e')) newWidth = Math.max(MIN_W, windowResizeState.startWidth + dx);
+  if (dir.includes('s')) newHeight = Math.max(MIN_H, windowResizeState.startHeight + dy);
+  if (dir.includes('w')) {
+    newWidth = Math.max(MIN_W, windowResizeState.startWidth - dx);
+    newLeft = windowResizeState.startLeft + (windowResizeState.startWidth - newWidth);
+  }
+  if (dir.includes('n')) {
+    newHeight = Math.max(MIN_H, windowResizeState.startHeight - dy);
+    newTop = windowResizeState.startTop + (windowResizeState.startHeight - newHeight);
+  }
+
+  el.style.left = newLeft + 'px';
+  el.style.top = newTop + 'px';
+  el.style.width = newWidth + 'px';
+  el.style.height = newHeight + 'px';
+}
+
+function onWindowResizeEnd() {
+  if (!windowResizeState.active) return;
+  const id = windowResizeState.id;
+  windowResizeState.active = false;
+  document.body.classList.remove('window-resizing');
+  document.removeEventListener('mousemove', onWindowResizeMove);
+  document.removeEventListener('mouseup', onWindowResizeEnd);
+
+  const entry = openWindows[id];
+  if (entry) {
+    saveWindowGeometry(id, {
+      x: parseFloat(entry.element.style.left),
+      y: parseFloat(entry.element.style.top),
+      width: parseFloat(entry.element.style.width),
+      height: parseFloat(entry.element.style.height),
+    });
+  }
+}
+
+function getOpenWindows() {
+  return Object.entries(openWindows).map(([id, entry]) => ({
+    id,
+    title: entry.title,
+    icon: entry.icon,
+    minimized: entry.element.classList.contains('minimized'),
+    focused: entry.element.classList.contains('focused'),
+  }));
+}
+
+function closeAllWindows() {
+  Object.keys(openWindows).forEach((id) => {
+    const entry = openWindows[id];
+    if (entry) entry.element.remove();
+  });
+  openWindows = {};
+  if (window.updateTaskButtons) window.updateTaskButtons();
+}
+
+/* ============================================================
+   LOAD SAVED THEME
+   ============================================================ */
+
+loadSavedTheme();
+
+/* ============================================================
+   EXPOSE FOR DEBUG
    ============================================================ */
 
 window.pulsar = {
@@ -1827,4 +2883,22 @@ window.pulsar = {
   applyTheme,
   getCurrentTheme,
   summonPulsar,
+  openMentionDropdown,
+  insertMention,
+};
+
+window.pulsarOS = {
+  openWindow,
+  closeWindow,
+  focusWindow,
+  minimizeWindow,
+  restoreWindow,
+  toggleMaximizeWindow,
+  getOpenWindows,
+  closeAllWindows,
+  buildDesktop,
+  showDesktop,
+  hideDesktop,
+  clearDesktopSelection,
+  DESKTOP_ICONS,
 };

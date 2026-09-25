@@ -419,6 +419,7 @@ body {
   border-top: 2px solid #808080;
   background: var(--win-bg-alt);
   flex-shrink: 0;
+  position: relative;
 }
 .composer input { flex: 1; padding: 6px 8px; font-family: inherit; font-size: 12px; }
 .composer button { min-width: 70px; }
@@ -1139,5 +1140,524 @@ body.dragging-active { user-select: none; cursor: move; }
     height: 36px !important;
     min-width: 36px !important;
     font-size: 14px !important;
+  }
+}
+
+/* ============================================================
+   @MENTION AUTOCOMPLETE
+   ============================================================ */
+
+.mention-autocomplete {
+  display: none;
+  position: fixed;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--win-bg);
+  border: 2px solid;
+  border-color: var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.35);
+  z-index: 9999;
+  font-family: 'MS Sans Serif', Arial, sans-serif;
+  font-size: 12px;
+  user-select: none;
+}
+
+.mention-autocomplete.open {
+  display: block;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: var(--title-bg);
+  color: var(--title-text);
+}
+
+.mention-item .mention-avatar {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border: 1px solid;
+  border-color: var(--win-border-light) var(--win-border-mid) var(--win-border-mid) var(--win-border-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.mention-item .mention-name {
+  flex: 1;
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-item .mention-badge {
+  font-size: 10px;
+  font-weight: normal;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.mention-item.bot .mention-avatar {
+  background: #800080;
+}
+
+/* Highlight @mentions inside messages */
+.mention-highlight {
+  background: var(--title-bg);
+  color: var(--title-text);
+  padding: 1px 4px;
+  font-weight: bold;
+  border-radius: 0;
+}
+
+/* Mobile: bigger tap targets */
+@media (max-width: 720px) {
+  .mention-autocomplete {
+    min-width: 220px;
+    max-width: 90vw;
+    max-height: 40vh;
+  }
+
+  .mention-item {
+    padding: 10px 12px;
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .mention-item .mention-avatar {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    font-size: 13px;
+  }
+}
+
+/* ============================================================
+   PULSAR95 DESKTOP
+   ============================================================ */
+
+.desktop {
+  position: fixed;
+  inset: 0;
+  bottom: 32px; /* leave room for taskbar */
+  background: var(--desktop-bg);
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, #fff, transparent),
+    radial-gradient(1px 1px at 60% 70%, #fff, transparent),
+    radial-gradient(1px 1px at 80% 20%, #fff, transparent),
+    radial-gradient(1px 1px at 33% 80%, #fff, transparent),
+    radial-gradient(1px 1px at 90% 60%, #fff, transparent);
+  overflow: hidden;
+  z-index: 100;
+  user-select: none;
+}
+
+.desktop.hidden { display: none; }
+
+/* ── Desktop icon grid ── */
+.desktop-icons {
+  position: absolute;
+  inset: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 4px;
+  pointer-events: none; /* children get pointer-events */
+}
+
+.desktop-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  width: 78px;
+  padding: 6px 2px;
+  cursor: pointer;
+  border: 1px dotted transparent;
+  pointer-events: auto;
+  text-align: center;
+  user-select: none;
+  position: absolute; /* absolute so we can drag freely */
+  transition: none;
+}
+
+.desktop-icon:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.desktop-icon.selected {
+  background: var(--title-bg);
+  outline: 1px dotted #fff;
+  outline-offset: -1px;
+}
+
+.desktop-icon.selected .icon-label {
+  background: var(--title-bg);
+  color: #fff;
+}
+
+.desktop-icon .icon-image {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  line-height: 1;
+  margin-bottom: 4px;
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, 0.4));
+  pointer-events: none;
+}
+
+.desktop-icon .icon-label {
+  font-family: 'MS Sans Serif', Arial, sans-serif;
+  font-size: 11px;
+  font-weight: normal;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+  padding: 1px 3px;
+  word-wrap: break-word;
+  line-height: 1.2;
+  max-width: 74px;
+  pointer-events: none;
+}
+
+/* ── Window layer ── */
+.window-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* windows enable their own */
+  z-index: 200;
+}
+
+.window-layer > * {
+  pointer-events: auto;
+}
+
+/* ── Selection box (rubber band) ── */
+.selection-box {
+  position: absolute;
+  border: 1px dashed var(--title-bg);
+  background: rgba(0, 0, 128, 0.15);
+  display: none;
+  pointer-events: none;
+  z-index: 150;
+}
+
+.selection-box.active {
+  display: block;
+}
+
+/* ── Icon dragging state ── */
+body.icon-dragging {
+  cursor: move;
+  user-select: none;
+}
+
+body.icon-dragging .desktop-icon {
+  cursor: move;
+}
+
+/* ── Desktop selection active ── */
+body.selecting .desktop {
+  cursor: crosshair;
+}
+
+/* ── Desktop visible → hide auth-screen default position ── */
+#desktop:not(.hidden) ~ #auth-screen {
+  /* auth screen sits on top if it's open */
+  z-index: 500;
+}
+
+/* ── Mobile: Desktop works but smaller icons ── */
+@media (max-width: 720px) {
+  .desktop {
+    bottom: 0;
+  }
+
+  .desktop-icon {
+    width: 64px;
+    padding: 4px 2px;
+  }
+
+  .desktop-icon .icon-image {
+    width: 32px;
+    height: 32px;
+    font-size: 28px;
+  }
+
+  .desktop-icon .icon-label {
+    font-size: 10px;
+    max-width: 60px;
+  }
+}
+
+/* ============================================================
+   PULSAR95 WINDOW SYSTEM
+   ============================================================ */
+
+.os-window {
+  position: absolute;
+  min-width: 200px;
+  min-height: 100px;
+  background: var(--win-bg);
+  border: 2px solid;
+  border-color: var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 200;
+  font-family: 'MS Sans Serif', Arial, sans-serif;
+  font-size: 12px;
+  user-select: none;
+}
+
+.os-window.focused {
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+}
+
+/* ── Window title bar ── */
+.os-window .win-titlebar {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 2px 2px 2px 4px;
+  background: var(--win-bg);
+  border-bottom: 1px solid var(--win-border-mid);
+  cursor: move;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.os-window.focused .win-titlebar {
+  background: linear-gradient(to right, var(--title-bg), var(--title-bg-end));
+  color: var(--title-text);
+}
+
+.os-window:not(.focused) .win-titlebar {
+  background: #808080;
+  color: #c0c0c0;
+}
+
+.os-window .win-icon {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.os-window .win-title {
+  flex: 1;
+  font-weight: bold;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 2px;
+}
+
+.os-window .win-controls {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.os-window .win-btn {
+  width: 18px;
+  height: 18px;
+  background: var(--win-bg);
+  border: 2px solid;
+  border-color: var(--win-border-light) var(--win-border-dark) var(--win-border-dark) var(--win-border-light);
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Marlett', 'MS Sans Serif', Arial, sans-serif;
+}
+
+.os-window .win-btn:active {
+  border-color: var(--win-border-dark) var(--win-border-light) var(--win-border-light) var(--win-border-dark);
+  padding: 1px 0 0 1px;
+}
+
+.os-window .win-btn:hover {
+  background: #d0d0d0;
+}
+
+/* ── Window body ── */
+.os-window .win-body {
+  flex: 1;
+  overflow: auto;
+  background: var(--win-bg);
+  min-height: 0;
+  position: relative;
+}
+
+.os-window .win-body.padded {
+  padding: 8px;
+}
+
+/* ── Resize handles ── */
+.os-window .win-resize {
+  position: absolute;
+  z-index: 10;
+}
+
+.os-window .win-resize-n {
+  top: -2px;
+  left: 4px;
+  right: 4px;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.os-window .win-resize-s {
+  bottom: -2px;
+  left: 4px;
+  right: 4px;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.os-window .win-resize-e {
+  right: -2px;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  cursor: ew-resize;
+}
+
+.os-window .win-resize-w {
+  left: -2px;
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  cursor: ew-resize;
+}
+
+.os-window .win-resize-ne {
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  cursor: nesw-resize;
+}
+
+.os-window .win-resize-nw {
+  top: -2px;
+  left: -2px;
+  width: 8px;
+  height: 8px;
+  cursor: nwse-resize;
+}
+
+.os-window .win-resize-se {
+  bottom: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  cursor: nwse-resize;
+}
+
+.os-window .win-resize-sw {
+  bottom: -2px;
+  left: -2px;
+  width: 8px;
+  height: 8px;
+  cursor: nesw-resize;
+}
+
+/* ── Minimized window (hidden) ── */
+.os-window.minimized {
+  display: none !important;
+}
+
+/* ── Maximized window ── */
+.os-window.maximized {
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: none;
+  box-shadow: none;
+}
+
+/* ── Window drag state ── */
+body.window-dragging,
+body.window-dragging * {
+  cursor: move !important;
+  user-select: none !important;
+}
+
+body.window-resizing,
+body.window-resizing * {
+  user-select: none !important;
+}
+
+/* ── Taskbar buttons for open windows ── */
+.win95-task-btn.minimized {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* ── Focused window taskbar highlight ── */
+.win95-task-btn.active {
+  border-color: #404040 #ffffff #ffffff #404040;
+  background: #d8d8d8;
+  font-weight: bold;
+}
+
+/* ── Mobile: windows still work but touch-friendly ── */
+@media (max-width: 720px) {
+  .os-window {
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.5);
+  }
+
+  .os-window .win-btn {
+    width: 22px;
+    height: 22px;
+    font-size: 12px;
+  }
+
+  .os-window .win-titlebar {
+    height: 26px;
+  }
+
+  .os-window .win-resize-se {
+    width: 20px;
+    height: 20px;
+  }
+
+  .os-window .win-resize-e,
+  .os-window .win-resize-s {
+    width: 12px;
+    height: 12px;
   }
 }
