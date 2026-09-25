@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
 import Sound from './sounds.js';
 import { THEMES, applyTheme, getCurrentTheme, loadSavedTheme } from './themes.js';
+import { openTerminal, registerTerminalIcon } from './terminal.js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -2176,6 +2177,15 @@ const DESKTOP_ICONS = [
   },
 ];
 
+// Register the terminal icon (added by terminal.js module)
+registerTerminalIcon(DESKTOP_ICONS, {
+  state,
+  escapeHtml,
+  getCurrentTheme,
+  THEMES,
+  pulsarOS: window.pulsarOS,
+});
+
 const DESKTOP_POS_KEY = 'pulsar95_desktop_icon_pos';
 let desktopIconPositions = {};
 let selectedDesktopIcons = new Set();
@@ -2902,3 +2912,20 @@ window.pulsarOS = {
   clearDesktopSelection,
   DESKTOP_ICONS,
 };
+
+/* ============================================================
+   REGISTER TERMINAL APP
+   ============================================================ */
+
+registerTerminalIcon(DESKTOP_ICONS, {
+  state,
+  escapeHtml,
+  getCurrentTheme,
+  THEMES,
+  pulsarOS: window.pulsarOS,
+});
+
+// Rebuild desktop so the new icon appears
+if (window.pulsarOS && window.pulsarOS.buildDesktop) {
+  window.pulsarOS.buildDesktop();
+}

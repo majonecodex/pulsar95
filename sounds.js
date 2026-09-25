@@ -7,14 +7,43 @@
 const Sound = (() => {
   let ctx = null;
   let muted = localStorage.getItem('pulsar95_muted') === '1';
+  let userGestureDetected = false;
+
+  // Detect the first user gesture (click, key, or touch).
+  // Browsers block AudioContext until the user interacts — this
+  // lets us skip silent sound calls and unlock audio once ready.
+  ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((evt) => {
+    window.addEventListener(evt, function unlock() {
+      userGestureDetected = true;
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      // Remove all listeners — we only need the first gesture
+      ['click', 'keydown', 'touchstart', 'pointerdown'].forEach((e) => {
+        window.removeEventListener(e, unlock);
+      });
+    });
+  });
 
   function getCtx() {
+    // Skip entirely if the user hasn't interacted yet.
+    // This prevents the console warning spam on boot.
+    if (!userGestureDetected) return null;
+
     if (!ctx) {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return null;
-      ctx = new Ctx();
+      try {
+        ctx = new Ctx();
+      } catch (e) {
+        return null;
+      }
     }
-    if (ctx.state === 'suspended') ctx.resume();
+
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
     return ctx;
   }
 
@@ -23,26 +52,31 @@ const Sound = (() => {
     const c = getCtx();
     if (!c || muted) return;
 
-    const now = c.currentTime;
-    const osc = c.createOscillator();
-    const g = c.createGain();
+    try {
+      const now = c.currentTime;
+      const osc = c.createOscillator();
+      const g = c.createGain();
 
-    osc.type = type;
-    osc.frequency.value = freq;
+      osc.type = type;
+      osc.frequency.value = freq;
 
-    g.gain.setValueAtTime(0, now + start);
-    g.gain.linearRampToValueAtTime(gain, now + start + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+      g.gain.setValueAtTime(0, now + start);
+      g.gain.linearRampToValueAtTime(gain, now + start + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
 
-    osc.connect(g);
-    g.connect(c.destination);
-    osc.start(now + start);
-    osc.stop(now + start + dur);
+      osc.connect(g);
+      g.connect(c.destination);
+      osc.start(now + start);
+      osc.stop(now + start + dur);
+    } catch (e) {
+      // Silently ignore any Web Audio errors
+    }
   }
 
   // Sequence player
   function playSequence(notes) {
     if (muted) return;
+    if (!userGestureDetected) return;
     notes.forEach((n) => playNote(n));
   }
 
@@ -119,6 +153,11 @@ const Sound = (() => {
     setMuted(val) {
       muted = !!val;
       localStorage.setItem('pulsar95_muted', muted ? '1' : '0');
+    },
+
+    // Expose for debugging
+    isUnlocked() {
+      return userGestureDetected;
     },
   };
 })();
