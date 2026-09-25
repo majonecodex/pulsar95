@@ -3,19 +3,41 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+
   <title>Pulsar95 - Cosmic Chat</title>
+
+  <script>
+    (function () {
+      var w = window.innerWidth;
+      var h = window.innerHeight;
+      var isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      var ua = navigator.userAgent || '';
+      var uaMobile = /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|Opera Mini|IEMobile/i.test(ua);
+      var isMobile = w < 900 || (isCoarse && w < 1200) || uaMobile;
+      if (isMobile) document.documentElement.classList.add('is-mobile');
+    })();
+  </script>
+
   <link rel="icon"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#10022;</text></svg>">
-  <link rel="stylesheet" href="styles.css">
+
+  <link rel="stylesheet" href="styles.css?v=9">
 </head>
 
 <body>
-  <!-- Win95 Boot Sequence -->
+
+  <!-- ═══ Win95 Boot Sequence ═══ -->
   <div id="boot-screen">
     <div id="boot-content"></div>
     <div class="boot-hint">Click anywhere to skip...</div>
   </div>
+
+  <!-- ═══ Login Screen ═══ -->
   <div id="auth-screen" class="window">
     <div class="title-bar">
       <span class="title-bar-text">&#10022; Pulsar95 - Sign In</span>
@@ -55,33 +77,51 @@
     </div>
   </div>
 
+  <!-- ═══ Main App ═══ -->
   <div id="app-screen" class="hidden">
     <div class="window app-window">
       <div class="title-bar">
-        <span class="title-bar-text">&#10022; Pulsar95 - <span id="status-text">Connected</span></span>
+        <span class="title-bar-text">✦ Pulsar95 — <span id="status-text">Connected</span></span>
         <div class="title-bar-controls">
           <button aria-label="Minimize"></button>
           <button aria-label="Maximize"></button>
-          <button id="logout-btn" aria-label="Close" title="Log out and close"></button>
+          <button id="logout-btn" aria-label="Close" title="Log out & close"></button>
         </div>
       </div>
+
       <div class="window-body app-body">
 
-        <aside class="room-rail">
+        <!-- ═══ Mobile Top Bar ═══ -->
+        <div id="mobile-topbar">
+          <button id="mobile-rooms-btn" title="Rooms">☰</button>
+          <div id="mobile-channel-title">
+            <span class="channel-hash">#</span>
+            <span id="mobile-channel-name">general</span>
+          </div>
+          <button id="mobile-members-btn" title="Channels">☰</button>
+        </div>
+
+        <!-- ═══ Drawer Scrim ═══ -->
+        <div id="mobile-scrim"></div>
+
+        <!-- ═══ Room Rail ═══ -->
+        <aside class="room-rail" id="room-rail">
           <div id="rooms-container"></div>
           <button class="room-icon add-room" id="add-room-btn" title="Create new room">+</button>
         </aside>
 
-        <aside class="channel-pane">
-          <div class="room-header" id="room-name">...</div>
+        <!-- ═══ Channel Pane ═══ -->
+        <aside class="channel-pane" id="channel-pane">
+          <div class="room-header" id="room-name">…</div>
           <div class="channels" id="channels-container"></div>
           <button class="add-channel" id="add-channel-btn">+ New Channel</button>
           <div class="user-panel">
             <span class="user-dot" id="user-dot"></span>
-            <span id="user-name">...</span>
+            <span id="user-name">…</span>
           </div>
         </aside>
 
+        <!-- ═══ Chat Area ═══ -->
         <main class="chat">
           <div class="chat-header">
             <span class="channel-hash">#</span>
@@ -89,7 +129,10 @@
             <span class="chat-spacer"></span>
             <span class="chat-count" id="member-count"></span>
           </div>
+
           <div class="messages" id="messages"></div>
+
+          <!-- Typing Indicator -->
           <div class="typing-indicator" id="typing-indicator" aria-live="polite">
             <span class="typing-text"></span>
             <span class="typing-dots">
@@ -98,10 +141,12 @@
               <span class="dot"></span>
             </span>
           </div>
+
+          <!-- Composer -->
           <form class="composer" id="composer">
             <input type="file" id="file-input" accept="image/*" style="display:none">
             <button type="button" id="attach-btn" title="Attach image">📎</button>
-            <input id="message-input" placeholder="Type a message..." autocomplete="off" maxlength="2000">
+            <input id="message-input" placeholder="Message #general" autocomplete="off" maxlength="2000">
             <button type="submit">Send</button>
           </form>
         </main>
@@ -109,7 +154,8 @@
       </div>
     </div>
   </div>
-  <!-- Windows 95 Taskbar -->
+
+  <!-- ═══ Windows 95 Taskbar ═══ -->
   <div id="win95-taskbar">
     <button id="win95-start-btn">
       <span class="start-logo"></span>
@@ -125,7 +171,7 @@
     </div>
   </div>
 
-  <!-- Start menu (opens from Start button) -->
+  <!-- ═══ Start Menu ═══ -->
   <div id="win95-start-menu">
     <div class="start-menu-sidebar">Pulsar95</div>
     <div class="start-menu-items">
@@ -162,7 +208,8 @@
       </div>
     </div>
   </div>
-  <script type="module" src="app.js"></script>
+
+  <script type="module" src="app.js?v=9"></script>
 </body>
 
 </html>
