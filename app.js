@@ -129,13 +129,11 @@ async function bootApp() {
 
   await loadRooms();
 
-  // Clean up any previous realtime subscription
   if (state.messagesSub) {
     await supabase.removeChannel(state.messagesSub);
     state.messagesSub = null;
   }
 
-  // Realtime
   state.messagesSub = supabase
     .channel('messages-stream')
     .on(
@@ -165,7 +163,6 @@ async function bootApp() {
     )
     .subscribe();
 
-  // Hook typing indicators
   const composerInput = document.getElementById('message-input');
   if (composerInput && !composerInput.dataset.typingHooked) {
     composerInput.dataset.typingHooked = '1';
@@ -179,7 +176,6 @@ async function bootApp() {
     });
   }
 
-  // Process pending invite
   const pendingInvite = sessionStorage.getItem('pulsar95_pending_invite');
   if (pendingInvite) {
     sessionStorage.removeItem('pulsar95_pending_invite');
@@ -233,7 +229,6 @@ async function loadRooms() {
     container.appendChild(div);
   });
 
-  // Hook context menus
   attachRoomContextMenus();
 
   if (state.rooms.length) {
@@ -326,7 +321,6 @@ async function loadChannels() {
     container.appendChild(div);
   });
 
-  // Hook context menus
   attachChannelContextMenus();
 
   const stillExists = state.currentChannel &&
@@ -444,6 +438,10 @@ function appendMessage(msg, scroll = false) {
   if (scroll) scrollToBottom();
 }
 
+/* ═══════════════════════════════════════════════════════════
+   COMPOSER — WITH AI BOT HOOK (this is what was missing)
+   ═══════════════════════════════════════════════════════════ */
+
 $('composer').onsubmit = async (e) => {
   e.preventDefault();
   const input = $('message-input');
@@ -472,6 +470,7 @@ $('composer').onsubmit = async (e) => {
     input.value = content;
   } else {
     Sound.success();
+    summonPulsar(content);   // ⬅️ THE MISSING LINE
   }
 };
 
@@ -743,7 +742,6 @@ async function runBootSequence() {
   await sleep(800);
   if (skipped) return;
 
-  Sound.shutdown ? null : null;
   playBootChime();
   bootScreen.classList.add('fade-out');
   sessionStorage.setItem('pulsar95_boot_done', '1');
@@ -915,7 +913,7 @@ function handleStartMenuAction(action) {
       } else alert('Open a channel first.');
       break;
     case 'help':
-      alert('Pulsar95 Help\n\n• Right-click a message you sent to delete it\n• Drag the blue title bar to move the window\n• Click 📎 to attach an image\n• Click the clock to show seconds');
+      alert('Pulsar95 Help\n\n• Right-click a message you sent to delete it\n• Drag the blue title bar to move the window\n• Click 📎 to attach an image\n• Click the clock to show seconds\n• Mention @pulsar to talk to the AI bot');
       break;
     case 'run': {
       const cmd = prompt('Type a command:\n\n  about    — About Pulsar95\n  whoami   — Your username\n  logout   — Sign out\n  clear    — Reload the app\n');
@@ -1731,21 +1729,18 @@ function setupMobileUI() {
     closeAllDrawers();
   };
 
-  // Auto-close drawer when a room is picked
   document.getElementById('rooms-container')?.addEventListener('click', (e) => {
     if (e.target.closest('.room-icon')) {
       closeAllDrawers();
     }
   });
 
-  // Auto-close drawer when a channel is picked
   document.getElementById('channels-container')?.addEventListener('click', (e) => {
     if (e.target.closest('.channel-item')) {
       closeAllDrawers();
     }
   });
 
-  // Also close after creating room/channel
   document.getElementById('add-room-btn')?.addEventListener('click', () => {
     setTimeout(closeAllDrawers, 100);
   });
@@ -1753,7 +1748,6 @@ function setupMobileUI() {
     setTimeout(closeAllDrawers, 100);
   });
 
-  // Update mobile top bar channel name when channel changes
   const observer = new MutationObserver(() => {
     const desktopChannelName = document.getElementById('channel-name')?.textContent || 'general';
     if (channelName) channelName.textContent = desktopChannelName;
@@ -1768,12 +1762,10 @@ function setupMobileUI() {
     });
   }
 
-  // Clean up drawers when switching to desktop
   window.addEventListener('resize', () => {
     if (!isMobile()) closeAllDrawers();
   });
 
-  // Esc closes drawers
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeAllDrawers();
   });
@@ -1788,6 +1780,41 @@ setupMobileUI();
 loadSavedTheme();
 
 /* ============================================================
+   AI BOT — @pulsar MENTIONS
+   ============================================================ */
+
+async function summonPulsar(aiMessage) {
+  if (!/@pulsar\b/i.test(aiMessage)) return;
+  if (!state.currentChannel || !state.user) return;
+
+  console.log('[Pulsar AI] Sending to edge function:', aiMessage.slice(0, 60));
+
+  try {
+    const res = await fetch(
+      'https://nnfmculmtkgiulvffypn.supabase.co/functions/v1/pulsar-ai',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel_id: state.currentChannel.id,
+          user_id: state.user.id,
+          message_content: aiMessage,
+        }),
+      }
+    );
+
+    const data = await res.json().catch(() => ({}));
+    console.log('[Pulsar AI] Response:', data);
+
+    if (!res.ok) {
+      console.warn('[Pulsar AI] Error:', data);
+    }
+  } catch (err) {
+    console.warn('[Pulsar AI] Fetch failed:', err);
+  }
+}
+
+/* ============================================================
    DEBUG — expose internals
    ============================================================ */
 
@@ -1799,4 +1826,5 @@ window.pulsar = {
   Sound,
   applyTheme,
   getCurrentTheme,
+  summonPulsar,
 };
