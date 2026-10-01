@@ -27,9 +27,23 @@
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#10022;</text></svg>">
 
   <link rel="stylesheet" href="styles.css?v=9">
+
+  <style>
+    /* Hide the entire app when maintenance is active */
+    html.maintenance-active body>*:not(#maintenance-overlay) {
+      display: none !important;
+    }
+  </style>
 </head>
 
 <body>
+
+  <script type="module">
+    import { initMaintenance } from './maintenance.js';
+    initMaintenance();
+  </script>
+
+  <script type="module" src="app.js?v=10"></script>
 
   <!-- ═══ Win95 Boot Sequence ═══ -->
   <div id="boot-screen">
@@ -230,6 +244,10 @@
   </div>
 
   <script type="module" src="app.js?v=9"></script>
+  <script type="module">
+    import { initMaintenance } from './maintenance.js';
+    initMaintenance();
+  </script>
 </body>
 
 </html>

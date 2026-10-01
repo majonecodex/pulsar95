@@ -37,6 +37,8 @@ let myTypingActive = false;
 
 const $ = (id) => document.getElementById(id);
 
+const isMobileDevice = () => window.matchMedia('(max-width: 900px)').matches;
+
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -115,11 +117,19 @@ async function bootApp() {
 
   $('auth-screen').classList.add('hidden');
 
-  // Show the OS desktop layer
-  if (window.pulsarOS && window.pulsarOS.showDesktop) window.pulsarOS.showDesktop();
+  // ── Mobile vs Desktop split ──
+  const mobile = isMobileDevice();
 
-  // Hide the legacy chat screen — it opens as a window later
-  $('app-screen').classList.add('hidden');
+  if (mobile) {
+    // MOBILE: classic chat UI, no desktop
+    if (window.pulsarOS && window.pulsarOS.hideDesktop) window.pulsarOS.hideDesktop();
+    $('app-screen').classList.remove('hidden');
+  } else {
+    // DESKTOP: full OS with desktop
+    if (window.pulsarOS && window.pulsarOS.showDesktop) window.pulsarOS.showDesktop();
+    $('app-screen').classList.remove('hidden');
+  }
+
   if ($('status-text')) $('status-text').textContent = 'Connected';
 
   Sound.notify();
@@ -189,12 +199,6 @@ async function bootApp() {
     sessionStorage.removeItem('pulsar95_pending_invite');
     setTimeout(() => processInviteCode(pendingInvite), 800);
   }
-
-  // Auto-open chat window so desktop isn't empty
-  setTimeout(() => {
-    const appScreen = document.getElementById('app-screen');
-    if (appScreen) appScreen.classList.remove('hidden');
-  }, 400);
 }
 
 /* ============================================================
@@ -402,7 +406,10 @@ async function loadMessages() {
     container.innerHTML = '<div class="empty-state">No messages yet. Say something.</div>';
   } else {
     data.forEach((m) => appendMessage(m));
-    scrollToBottom();
+    // Wait for the browser to lay out the DOM before scrolling
+    requestAnimationFrame(() => {
+      requestAnimationFrame(scrollToBottom);
+    });
   }
   attachMessageContextMenus();
 }
@@ -467,7 +474,7 @@ function highlightMentions(text) {
 }
 
 /* ============================================================
-   COMPOSER
+   COMPOSER — HARDENED
    ============================================================ */
 
 $('composer').onsubmit = async (e) => {
@@ -477,29 +484,51 @@ $('composer').onsubmit = async (e) => {
   const attachment_url = pendingAttachmentUrl;
   if ((!content && !attachment_url) || !state.currentChannel) return;
 
-  Sound.send();
-  stopTyping();
+  // Non-critical side effects — never block the insert
+  try { Sound.send(); } catch (err) { /* ignore */ }
+  try { stopTyping(); } catch (err) { /* ignore */ }
+
   input.value = '';
   pendingAttachmentUrl = null;
+
   if ($('attach-btn')) {
     $('attach-btn').textContent = '📎';
     $('attach-btn').disabled = false;
   }
   $('message-input').placeholder = 'Message #' + state.currentChannel.name;
 
-  const { error } = await supabase.from('messages').insert({
+  // THE INSERT
+  console.log('[Composer] Inserting message:', {
     channel_id: state.currentChannel.id,
     author_id: state.user.id,
     content: content || '(image)',
     attachment_url,
   });
+
+  const { data: inserted, error } = await supabase
+    .from('messages')
+    .insert({
+      channel_id: state.currentChannel.id,
+      author_id: state.user.id,
+      content: content || '(image)',
+      attachment_url,
+    })
+    .select('*, author:profiles(username, avatar_color)')
+    .single();
+
   if (error) {
-    alert(error.message);
+    console.error('[Composer] Insert failed:', error);
+    alert('Failed to send: ' + error.message);
     input.value = content;
-  } else {
-    Sound.success();
-    summonPulsar(content);
+    return;
   }
+
+  console.log('[Composer] Message inserted successfully');
+
+  try { Sound.success(); } catch (err) { /* ignore */ }
+
+  // AI bot (fire-and-forget)
+  summonPulsar(content).catch((err) => console.warn('[Composer] summonPulsar failed:', err));
 };
 
 const scrollToBottom = () => {
@@ -784,7 +813,6 @@ function updateTaskButtons() {
 
   taskButtons.innerHTML = '';
 
-  // 1. Real OS windows (from the window manager)
   if (window.pulsarOS && window.pulsarOS.getOpenWindows) {
     window.pulsarOS.getOpenWindows().forEach((w) => {
       const btn = document.createElement('button');
@@ -811,7 +839,6 @@ function updateTaskButtons() {
     });
   }
 
-  // 2. Legacy chat app (only if visible AND not managed by window system)
   if (!$('app-screen').classList.contains('hidden') &&
     !document.querySelector('.os-window[data-window-id="chat"]')) {
     const btn = document.createElement('button');
@@ -827,7 +854,6 @@ function updateTaskButtons() {
     taskButtons.appendChild(btn);
   }
 
-  // 3. Image lightbox
   if (document.getElementById('lightbox-overlay')) {
     const btn = document.createElement('button');
     btn.className = 'win95-task-btn active';
@@ -2177,15 +2203,6 @@ const DESKTOP_ICONS = [
   },
 ];
 
-// Register the terminal icon (added by terminal.js module)
-registerTerminalIcon(DESKTOP_ICONS, {
-  state,
-  escapeHtml,
-  getCurrentTheme,
-  THEMES,
-  pulsarOS: window.pulsarOS,
-});
-
 const DESKTOP_POS_KEY = 'pulsar95_desktop_icon_pos';
 let desktopIconPositions = {};
 let selectedDesktopIcons = new Set();
@@ -2895,6 +2912,7 @@ window.pulsar = {
   summonPulsar,
   openMentionDropdown,
   insertMention,
+  supabase,
 };
 
 window.pulsarOS = {
@@ -2925,7 +2943,7 @@ registerTerminalIcon(DESKTOP_ICONS, {
   pulsarOS: window.pulsarOS,
 });
 
-// Rebuild desktop so the new icon appears
+// Rebuild desktop so the terminal icon appears
 if (window.pulsarOS && window.pulsarOS.buildDesktop) {
   window.pulsarOS.buildDesktop();
 }
