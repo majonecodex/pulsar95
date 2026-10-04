@@ -4,7 +4,7 @@
    ============================================================ */
 
 const MAINTENANCE_CONFIG = {
-  enabled: true,           // ← Set to true to force-enable everywhere
+  enabled: false,           // ← Set to true to force-enable everywhere
   title: 'Pulsar95 — Scheduled Maintenance',
   message:
     'Pulsar95 is currently undergoing scheduled maintenance.<br><br>' +
